@@ -16,7 +16,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # 설정
 # ========================
 BASE_URL = "https://www.knu.ac.kr"
-NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42"
+NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action"
 
 
 # ========================
@@ -28,46 +28,47 @@ def send_to_discord(message: str):
         return
     payload = {"content": message}
     r = requests.post(DISCORD_WEBHOOK, json=payload)
-    print("Discord status:", r.status_code, r.text[:200])  # 처음 200글자만 확인
+    print("Discord status:", r.status_code, r.text[:200])  # 앞 200자만 확인
 
 
 # ========================
-# 학사공지 크롤링 (User-Agent + Referer 포함)
+# 학사공지 크롤링 (POST 방식)
 # ========================
 def fetch_notices():
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/117.0.0.0 Safari/537.36",
-        "Referer": "https://www.knu.ac.kr/"
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/x-www-form-urlencoded"
     }
 
-    res = requests.get(NOTICE_URL, headers=headers)
+    # POST 파라미터
+    data = {
+        "menu_idx": "42",
+        "pageIndex": "1"
+    }
+
+    res = requests.post(NOTICE_URL, headers=headers, data=data)
     res.raise_for_status()
 
     soup = BeautifulSoup(res.text, "html.parser")
 
-    # 게시판 구조 확인 후 선택자 수정
-    rows = soup.select("table.board-table tbody tr")
+    rows = soup.select("table tbody tr")
     if not rows:
         print("❌ 게시판 테이블을 찾을 수 없습니다. HTML 구조 확인 필요")
-        print(res.text[:1000])  # 앞 1000글자만 출력
+        print(res.text[:1000])
         return []
 
     notices = []
     for row in rows:
-        link_tag = row.select_one("td:nth-child(2) a")
-        if not link_tag:
+        link = row.select_one("td:nth-child(2) a")
+        if not link:
             continue
-
-        title = link_tag.get_text(strip=True)
-        relative_url = link_tag.get("href")
-        full_url = urljoin(BASE_URL, relative_url)
-
+        title = link.get_text(strip=True)
+        href = link.get("href")
         notices.append({
             "title": title,
-            "url": full_url
+            "url": urljoin(BASE_URL, href)
         })
+
     return notices
 
 
@@ -103,8 +104,7 @@ def main():
         print("❌ 공지를 가져오지 못했습니다")
         return
 
-    # 항상 최신 공지 1개 선택
-    latest_notice = notices[0]
+    latest_notice = notices[0]  # 항상 최신 공지 1개
     print(f"📢 최신 공지: {latest_notice['title']}")
 
     summary = summarize_with_gpt(latest_notice)
