@@ -1,25 +1,23 @@
-name: KNU Notice Bot
+name: 학사공지 자동 알림 (로컬 요약)
 
 on:
   schedule:
-    - cron: "0 * * * *"   # 매시간
-  workflow_dispatch:
+    - cron: '0 * * * *'  # 매일 오전 9시
+  workflow_dispatch:  # 수동 실행 가능
 
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
-
+          python-version: 3.10
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run python
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          pip install requests beautifulsoup4 transformers torch
+      - name: Run main.py
         run: python main.py
