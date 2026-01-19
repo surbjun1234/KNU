@@ -1,7 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
 import os
-import json
 from openai import OpenAI
 from urllib.parse import urljoin
 
@@ -18,7 +17,6 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # ========================
 BASE_URL = "https://www.knu.ac.kr"
 NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42"
-DATA_FILE = "last_notices.json"
 
 
 # ========================
@@ -28,7 +26,6 @@ def send_to_discord(message: str):
     if not DISCORD_WEBHOOK:
         print("❌ DISCORD_WEBHOOK is missing")
         return
-
     payload = {"content": message}
     r = requests.post(DISCORD_WEBHOOK, json=payload)
     print("Discord status:", r.status_code)
@@ -43,10 +40,10 @@ def fetch_notices():
                       "AppleWebKit/537.36 (KHTML, like Gecko) "
                       "Chrome/117.0.0.0 Safari/537.36"
     }
-
     res = requests.get(NOTICE_URL, headers=headers)
     res.raise_for_status()
 
+    from bs4 import BeautifulSoup
     soup = BeautifulSoup(res.text, "html.parser")
     rows = soup.select("table.board-table tbody tr")
 
@@ -64,23 +61,7 @@ def fetch_notices():
             "title": title,
             "url": full_url
         })
-
     return notices
-
-
-# ========================
-# 이전 공지 불러오기
-# ========================
-def load_last_notices():
-    if not os.path.exists(DATA_FILE):
-        return []
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_last_notices(notices):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(notices, f, ensure_ascii=False, indent=2)
 
 
 # ========================
@@ -111,32 +92,21 @@ def main():
     print("✅ 학사공지 자동 확인 시작")
 
     notices = fetch_notices()
-    print(f"📄 수집된 공지 개수: {len(notices)}")
+    if not notices:
+        print("❌ 공지를 가져오지 못했습니다")
+        return
 
-    last_notices = load_last_notices()
-    last_titles = {n["title"] for n in last_notices}
+    # 항상 최신 공지 1개 선택
+    latest_notice = notices[0]
+    print(f"📢 최신 공지: {latest_notice['title']}")
 
-    new_notices = [n for n in notices if n["title"] not in last_titles]
-    print(f"🆕 새로운 공지 개수: {len(new_notices)}")
+    summary = summarize_with_gpt(latest_notice)
 
-    if new_notices:
-        for notice in new_notices:
-            print(f"📢 전송 중: {notice['title']}")
-
-            summary = summarize_with_gpt(notice)
-
-            send_to_discord(
-                "📢 **경북대 학사공지 (새 공지)**\n\n"
-                f"📝 **요약**\n{summary}\n\n"
-                f"🔗 **공지 바로가기**\n{notice['url']}"
-            )
-    else:
-        send_to_discord(
-            "📢 **경북대 학사공지 알림**\n\n"
-            "오늘은 새로 올라온 학사공지가 없습니다 🙂"
-        )
-
-    save_last_notices(notices)
+    send_to_discord(
+        "📢 **경북대 학사공지 (최근 공지)**\n\n"
+        f"📝 **요약**\n{summary}\n\n"
+        f"🔗 **공지 바로가기**\n{latest_notice['url']}"
+    )
 
 
 if __name__ == "__main__":
