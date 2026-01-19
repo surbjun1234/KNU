@@ -1,36 +1,32 @@
-def fetch_notices():
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-    }
+name: 학사공지 자동 알림
 
-    params = {
-        "menu_idx": "42",
-        "pageIndex": "1"
-    }
+# 스케줄: 매일 오전 9시 / 수동 실행 가능
+on:
+  schedule:
+    - cron: '0 9 * * *'  # 매일 오전 9시
+  workflow_dispatch:
 
-    res = requests.get(NOTICE_URL, headers=headers, params=params)
-    if res.status_code != 200:
-        print(f"❌ 게시판 페이지 요청 실패: {res.status_code}")
-        return []
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+    steps:
+      # 1️⃣ 코드 체크아웃
+      - uses: actions/checkout@v3
 
-    soup = BeautifulSoup(res.text, "html.parser")
+      # 2️⃣ Python 설치
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'   # 문자열로 꼭 지정
 
-    # 최근 공지 구조에 맞춘 선택자 (div/ul/li 구조로 가정)
-    rows = soup.select("div.board_list ul li")  # 구조가 바뀌면 이 부분만 수정
-    if not rows:
-        print("❌ 게시판 테이블을 찾을 수 없습니다. HTML 구조 확인 필요")
-        return []
+      # 3️⃣ 의존성 설치
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 transformers torch
 
-    notices = []
-    for row in rows:
-        link = row.select_one("a")
-        if not link:
-            continue
-        title = link.get_text(strip=True)
-        href = link.get("href")
-        notices.append({
-            "title": title,
-            "url": urljoin(BASE_URL, href)
-        })
-
-    return notices
+      # 4️⃣ main.py 실행
+      - name: Run main.py
+        run: python main.py
