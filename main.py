@@ -35,10 +35,16 @@ def send_to_discord(message: str):
 
 
 # ========================
-# 학사공지 크롤링 (제목 + URL)
+# 학사공지 크롤링 (User-Agent 포함, 제목 + URL)
 # ========================
 def fetch_notices():
-    res = requests.get(NOTICE_URL)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/117.0.0.0 Safari/537.36"
+    }
+
+    res = requests.get(NOTICE_URL, headers=headers)
     res.raise_for_status()
 
     soup = BeautifulSoup(res.text, "html.parser")
