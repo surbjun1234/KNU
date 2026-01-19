@@ -28,24 +28,31 @@ def send_to_discord(message: str):
         return
     payload = {"content": message}
     r = requests.post(DISCORD_WEBHOOK, json=payload)
-    print("Discord status:", r.status_code)
+    print("Discord status:", r.status_code, r.text[:200])  # 처음 200글자만 확인
 
 
 # ========================
-# 학사공지 크롤링 (User-Agent 포함, 제목 + URL)
+# 학사공지 크롤링 (User-Agent + Referer 포함)
 # ========================
 def fetch_notices():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/117.0.0.0 Safari/537.36"
+                      "Chrome/117.0.0.0 Safari/537.36",
+        "Referer": "https://www.knu.ac.kr/"
     }
+
     res = requests.get(NOTICE_URL, headers=headers)
     res.raise_for_status()
 
-    from bs4 import BeautifulSoup
     soup = BeautifulSoup(res.text, "html.parser")
+
+    # 게시판 구조 확인 후 선택자 수정
     rows = soup.select("table.board-table tbody tr")
+    if not rows:
+        print("❌ 게시판 테이블을 찾을 수 없습니다. HTML 구조 확인 필요")
+        print(res.text[:1000])  # 앞 1000글자만 출력
+        return []
 
     notices = []
     for row in rows:
