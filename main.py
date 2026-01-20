@@ -1,20 +1,19 @@
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-import os
 import re
+import os
+from transformers import pipeline
 
 # --------------------------------------
 # 환경변수 세팅
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Gemini 모델
-GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 # 게시판 URL
 BASE_URL = "https://www.knu.ac.kr"
-NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42"
+NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/btin/stdList.action?menu_idx=42"
+
+# HuggingFace 요약 모델 로딩 (GitHub Actions에서 가능)
+summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
 # --------------------------------------
 # 공지 가져오기
@@ -26,9 +25,8 @@ def fetch_notices():
         return []
 
     soup = BeautifulSoup(res.text, "html.parser")
+    rows = soup.select("div.board_list table tr")  # tbody 제거
 
-    # tbody 제거, table 안 tr 모두 선택
-    rows = soup.select("div.board_list table tr")
     if not rows:
         print("❌ 게시판 테이블을 찾을 수 없습니다.")
         return []
@@ -42,7 +40,6 @@ def fetch_notices():
         title = subject_td.get_text(strip=True)
         href = subject_td.get("href")
 
-        # Javascript 링크 처리
         match = re.search(r"doRead\('(\d+)'", href)
         if match:
             ntt_id = match.group(1)
@@ -52,33 +49,17 @@ def fetch_notices():
 
         notices.append({"title": title, "url": full_url})
 
-    # 최신 공지 1개만
-    return notices[:1]
+    return notices[:1]  # 최신 공지 1개
 
 # --------------------------------------
-# Gemini로 요약
-def summarize_with_gemini(text):
-    headers = {
-        "Authorization": f"Bearer {GEMINI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": GEMINI_MODEL,
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant that summarizes text."},
-            {"role": "user", "content": f"Summarize this text briefly: {text}"}
-        ]
-    }
-
-    res = requests.post("https://api.gemini.google/v1/chat/completions", headers=headers, json=data)
-    if res.status_code != 200:
-        print(f"❌ Gemini API 오류: {res.status_code}")
+# HuggingFace로 요약
+def summarize_with_hf(text):
+    try:
+        summary = summarizer(text, max_length=60, min_length=20, do_sample=False)
+        return summary[0]['summary_text']
+    except Exception as e:
+        print(f"❌ 요약 실패: {e}")
         return text
-
-    response_json = res.json()
-    summary = response_json['choices'][0]['message']['content']
-    return summary
 
 # --------------------------------------
 # Discord 전송
@@ -106,7 +87,7 @@ def main():
     latest_notice = notices[0]
     print(f"📢 최신 공지: {latest_notice['title']}")
 
-    summary = summarize_with_gemini(latest_notice['title'])
+    summary = summarize_with_hf(latest_notice['title'])
     message = f"📢 {latest_notice['title']}\n📝 요약: {summary}\n🔗 {latest_notice['url']}"
     send_discord(message)
 
