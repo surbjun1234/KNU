@@ -6,7 +6,6 @@ import re
 
 # --------------------------------------
 # 환경변수 세팅
-# GitHub Secrets 또는 환경변수에 등록
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -15,7 +14,7 @@ GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 # 게시판 URL
 BASE_URL = "https://www.knu.ac.kr"
-NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/btin/stdList.action?menu_idx=42"
+NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42"
 
 # --------------------------------------
 # 공지 가져오기
@@ -28,8 +27,8 @@ def fetch_notices():
 
     soup = BeautifulSoup(res.text, "html.parser")
 
-    # table tbody tr 선택
-    rows = soup.select("div.board_list table tbody tr")
+    # tbody 제거, table 안 tr 모두 선택
+    rows = soup.select("div.board_list table tr")
     if not rows:
         print("❌ 게시판 테이블을 찾을 수 없습니다.")
         return []
@@ -43,7 +42,7 @@ def fetch_notices():
         title = subject_td.get_text(strip=True)
         href = subject_td.get("href")
 
-        # Javascript 링크 처리: doRead('nttId', ...)
+        # Javascript 링크 처리
         match = re.search(r"doRead\('(\d+)'", href)
         if match:
             ntt_id = match.group(1)
