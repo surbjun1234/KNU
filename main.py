@@ -2,52 +2,61 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import os
+import re
 
-# Discord Webhook
+# --------------------------------------
+# 환경변수 세팅
+# GitHub Secrets 또는 환경변수에 등록
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
-
-# Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_URL = "https://api.gemini.google/v1/chat/completions"
-GEMINI_MODEL = "gemini-2.5-flash-lite"  # 제일 저렴한 모델
 
-# 공지 URL
+# Gemini 모델
+GEMINI_MODEL = "gemini-2.5-flash-lite"
+
+# 게시판 URL
 BASE_URL = "https://www.knu.ac.kr"
-NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42"
+NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/btin/stdList.action?menu_idx=42"
 
-# 크롤링 함수
+# --------------------------------------
+# 공지 가져오기
 def fetch_notices():
     headers = {"User-Agent": "Mozilla/5.0"}
-    params = {"menu_idx": "42", "pageIndex": "1"}
-
-    res = requests.get(NOTICE_URL, headers=headers, params=params)
+    res = requests.get(NOTICE_URL, headers=headers)
     if res.status_code != 200:
         print(f"❌ 게시판 페이지 요청 실패: {res.status_code}")
         return []
 
     soup = BeautifulSoup(res.text, "html.parser")
-    
-    # 게시판 구조에 맞춰 선택자 수정 필요
-    rows = soup.select("div.board_list ul li")  # 구조 확인 후 바꾸기
+
+    # table tbody tr 선택
+    rows = soup.select("div.board_list table tbody tr")
     if not rows:
         print("❌ 게시판 테이블을 찾을 수 없습니다.")
         return []
 
     notices = []
     for row in rows:
-        link = row.select_one("a")
-        if not link:
+        subject_td = row.select_one("td.subject a")
+        if not subject_td:
             continue
-        title = link.get_text(strip=True)
-        href = link.get("href")
-        notices.append({
-            "title": title,
-            "url": urljoin(BASE_URL, href)
-        })
+
+        title = subject_td.get_text(strip=True)
+        href = subject_td.get("href")
+
+        # Javascript 링크 처리: doRead('nttId', ...)
+        match = re.search(r"doRead\('(\d+)'", href)
+        if match:
+            ntt_id = match.group(1)
+            full_url = f"https://www.knu.ac.kr/wbbs/bbs/btin/view.action?nttId={ntt_id}&menu_idx=42"
+        else:
+            full_url = "#"
+
+        notices.append({"title": title, "url": full_url})
 
     # 최신 공지 1개만
     return notices[:1]
 
+# --------------------------------------
 # Gemini로 요약
 def summarize_with_gemini(text):
     headers = {
@@ -59,11 +68,11 @@ def summarize_with_gemini(text):
         "model": GEMINI_MODEL,
         "messages": [
             {"role": "system", "content": "You are a helpful assistant that summarizes text."},
-            {"role": "user", "content": f"Summarize this: {text}"}
+            {"role": "user", "content": f"Summarize this text briefly: {text}"}
         ]
     }
 
-    res = requests.post(GEMINI_URL, headers=headers, json=data)
+    res = requests.post("https://api.gemini.google/v1/chat/completions", headers=headers, json=data)
     if res.status_code != 200:
         print(f"❌ Gemini API 오류: {res.status_code}")
         return text
@@ -72,11 +81,13 @@ def summarize_with_gemini(text):
     summary = response_json['choices'][0]['message']['content']
     return summary
 
+# --------------------------------------
 # Discord 전송
 def send_discord(message):
     if not DISCORD_WEBHOOK:
         print("❌ Discord Webhook 미설정")
         return
+
     data = {"content": message}
     res = requests.post(DISCORD_WEBHOOK, json=data)
     if res.status_code == 204:
@@ -84,7 +95,8 @@ def send_discord(message):
     else:
         print(f"❌ Discord 전송 실패: {res.status_code}")
 
-# 메인 실행
+# --------------------------------------
+# 메인
 def main():
     print("✅ 학사공지 자동 확인 시작")
     notices = fetch_notices()
@@ -99,5 +111,6 @@ def main():
     message = f"📢 {latest_notice['title']}\n📝 요약: {summary}\n🔗 {latest_notice['url']}"
     send_discord(message)
 
+# --------------------------------------
 if __name__ == "__main__":
     main()
