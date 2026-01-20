@@ -2,23 +2,40 @@ name: 학사공지 자동 알림
 
 on:
   schedule:
-    - cron: '0 9 * * *'  # 매일 오전 9시
+    - cron: '0 * * * *' # 매시간 정각
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v3
+
+      # ⚡ 캐시 기능 추가된 파이썬 셋업
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: 'pip' # pip 캐시 활성화
+
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 transformers torch
+          pip install -r requirements.txt
+
       - name: Run main.py
         run: python main.py
+
+      - name: Commit and Push last_id
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -f last_id.txt ]; then
+            git add last_id.txt
+          fi
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update last_id [skip ci]" && git push)
