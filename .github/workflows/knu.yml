@@ -2,9 +2,10 @@ name: 학사공지 자동 알림
 
 on:
   schedule:
-    - cron: '0 * * * *' # 매시간 정각
-  workflow_dispatch:
+    - cron: '0 * * * *' # 매시간 정각 실행
+  workflow_dispatch: # 수동 실행 버튼 활성화
 
+# last_id.txt 파일을 저장소에 쓰기 위한 권한 설정
 permissions:
   contents: write
 
@@ -14,29 +15,37 @@ jobs:
     env:
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      PYTHONUNBUFFERED: "1" # [필수] 파이썬 로그가 지연 없이 바로 출력되도록 설정
     steps:
       - uses: actions/checkout@v3
 
+      # 파이썬 3.10 설정 (pip 캐시 기능 켜기)
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
           cache: 'pip'
 
-      # [수정된 부분] 파일을 믿지 않고 직접 설치합니다.
+      # 라이브러리 강제 설치 (requirements.txt 파일 동기화 문제 방지)
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 openai
+          pip install requests beautifulsoup4 openai urllib3
 
+      # 크롤링 스크립트 실행
       - name: Run main.py
         run: python main.py
 
+      # 변경된 last_id.txt가 있다면 저장소에 반영 (Commit & Push)
       - name: Commit and Push last_id
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 파일이 존재하는지 확인 후 add
           if [ -f last_id.txt ]; then
             git add last_id.txt
           fi
+          
+          # 변경사항이 있을 때만 커밋하고 푸시 (에러 방지)
           git diff --quiet && git diff --staged --quiet || (git commit -m "Update last_id [skip ci]" && git push)
