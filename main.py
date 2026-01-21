@@ -7,7 +7,7 @@ import time
 # -----------------------------------------------------------
 # [테스트 설정]
 # -----------------------------------------------------------
-TEST_LAST_ID = 1336480  # 테스트용 (이 번호보다 큰 글을 찾음)
+TEST_LAST_ID = 1336480 
 
 # -----------------------------------------------------------
 # [설정] URL
@@ -19,7 +19,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def get_post_content(url):
     try:
         requests.packages.urllib3.disable_warnings()
-        response = requests.get(url, verify=False)
+        # 헤더를 함수 안에서도 동일하게 사용
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Connection': 'keep-alive'
+        }
+        response = requests.get(url, headers=headers, verify=False)
         response.encoding = 'UTF-8'
         soup = BeautifulSoup(response.text, 'html.parser')
         content_div = soup.select_one('.board_view_con') or soup.select_one('.view_con')
@@ -54,12 +61,11 @@ def send_discord_message(webhook_url, title, link, doc_id, content):
 def main():
     requests.packages.urllib3.disable_warnings()
     
-    print("--- [크롤러 시작] ---")
+    print("--- [크롤러 시작 (보안 우회 시도)] ---")
 
-    # 1. 기준 ID 설정
     if TEST_LAST_ID is not None:
         last_id = int(TEST_LAST_ID)
-        print(f"🎯 기준 ID (테스트): {last_id} (이 번호보다 커야 알림)")
+        print(f"🎯 기준 ID (테스트): {last_id}")
     else:
         latest_id_path = os.path.join(BASE_DIR, 'latest_id.txt')
         try:
@@ -70,40 +76,77 @@ def main():
             last_id = 0
         print(f"📂 기준 ID (파일): {last_id}")
 
-    # 2. 목록 접속
+    # 1. 헤더 강화 (진짜 크롬 브라우저처럼 보이기)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Connection': 'keep-alive',
+        'Referer': 'https://www.knu.ac.kr/',
+        'Upgrade-Insecure-Requests': '1'
+    }
+
     try:
-        response = requests.get(LIST_URL, verify=False)
+        # 세션 사용 (쿠키 유지 등을 위해)
+        session = requests.Session()
+        response = session.get(LIST_URL, headers=headers, verify=False)
         response.encoding = 'UTF-8'
+        
+        print(f"📡 응답 코드: {response.status_code}")
+        
         soup = BeautifulSoup(response.text, 'html.parser')
     except Exception as e:
         print(f"🚨 접속 실패: {e}")
         return
 
+    # 2. 선택자(Selector) 유연화
+    # tbody > tr 이 안 먹힐 경우를 대비해 그냥 tr을 다 찾고 필터링
     rows = soup.select("tbody > tr")
-    print(f"🔍 총 {len(rows)}개의 게시글 행을 검사합니다.\n")
+    if not rows:
+        print("⚠️ 'tbody > tr'로 행을 못 찾음. 'tr' 전체 검색 시도...")
+        rows = soup.select("tr")
+
+    print(f"🔍 총 {len(rows)}개의 행을 검사합니다.")
+
+    # [디버깅] 만약 0개라면 HTML 내용 일부 출력 (차단 여부 확인)
+    if len(rows) == 0:
+        print("\n🚨 [심각] 게시글을 하나도 못 찾았습니다. 가져온 HTML 내용은 다음과 같습니다:")
+        print("----------------------------------------------------------------")
+        # HTML의 제목과 앞부분 500자만 출력
+        print(f"Title: {soup.title.text if soup.title else 'No Title'}")
+        print(soup.prettify()[:1000]) 
+        print("----------------------------------------------------------------")
+        return
 
     new_posts = []
 
     for i, row in enumerate(rows):
         cols = row.select("td")
+        # 데이터가 없는 행(헤더 등)은 건너뜀
         if len(cols) < 2: continue
         
-        # 화면에 보이는 번호 (참고용)
+        # 화면 번호 확인
         visible_num = cols[0].text.strip()
-        title = cols[1].find("a").text.strip()
         
-        # 링크에서 진짜 ID 추출
-        href_content = cols[1].find("a").get('href', '')
+        # 제목 태그 찾기
+        title_tag = cols[1].find("a")
+        if not title_tag: continue # 제목 링크가 없으면 건너뜀
+
+        title = title_tag.text.strip()
+        href_content = title_tag.get('href', '')
+        
+        # URL 고유번호 추출
         match = re.search(r"(\d+)", href_content)
         
         if match:
             doc_id = int(match.group(1))
             
-            # 로그 출력 (봇이 뭘 보고 있는지 확인)
-            print(f"[{i+1}] 화면번호:{visible_num} | 고유ID:{doc_id} | 제목:{title[:10]}...", end=" ")
+            # 봇 로그: 현재 보고 있는 글 출력
+            print(f"[{i}] 번호:{doc_id} | 제목:{title[:10]}...", end=" ")
 
             if doc_id > last_id:
-                print(f"✅ [새 글!]")
+                print("✅ [새 글]")
                 real_link = VIEW_URL_BASE + str(doc_id)
                 new_posts.append({
                     'id': doc_id,
@@ -111,17 +154,14 @@ def main():
                     'link': real_link
                 })
             else:
-                print(f"⏹️ [옛날 글]") 
-                # ★ 중요: 여기서 break 하지 않고 계속 검사합니다!
-                # 고정 공지 때문에 순서가 뒤섞여 있을 수 있기 때문입니다.
+                print("⏹️ [옛날 글]")
         else:
-            print(f"[{i+1}] ID 추출 실패 (공지 등): {visible_num}")
+            # 번호 추출 실패 (단순 링크이거나 공지)
+            pass
 
-    print(f"\n✨ 총 발견된 새 공지: {len(new_posts)}개")
+    print(f"\n✨ 발견된 새 공지: {len(new_posts)}개")
 
-    # 3. 전송 로직
     if new_posts:
-        # ID 기준 오름차순 정렬 (옛날 글 -> 최신 글 순서로 전송)
         new_posts.sort(key=lambda x: x['id'])
         
         webhook_url = os.environ.get("DISCORD_WEBHOOK_URL") or os.environ.get("DISCORD_WEBHOOK")
@@ -132,18 +172,16 @@ def main():
                 send_discord_message(webhook_url, post['title'], post['link'], post['id'], content)
                 time.sleep(1)
         else:
-            print("❌ WebHook URL이 설정되지 않았습니다.")
+            print("❌ WebHook URL 없음")
 
-        # 테스트 아닐 때만 파일 업데이트
         if TEST_LAST_ID is None:
-            # 가장 큰 ID 찾기
             max_id = max(p['id'] for p in new_posts)
             latest_id_path = os.path.join(BASE_DIR, 'latest_id.txt')
             with open(latest_id_path, 'w', encoding='utf-8') as f:
                 f.write(str(max_id))
-            print(f"💾 파일 업데이트 완료: {max_id}")
+            print(f"💾 업데이트 완료: {max_id}")
     else:
-        print("💤 전송할 새로운 공지가 없습니다.")
+        print("💤 전송할 공지가 없습니다.")
 
 if __name__ == "__main__":
     main()
