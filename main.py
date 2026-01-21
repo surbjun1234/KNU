@@ -5,23 +5,24 @@ import re
 import time
 
 # -----------------------------------------------------------
-# [테스트 모드 설정] ★여기를 수정하세요★
-# 테스트하고 싶은 게시판의 None을 '기준 번호(숫자)'로 바꾸세요.
-# 예: "general": 1336480
-# 테스트가 끝나면 다시 모두 None으로 돌려놓으세요 (자동 모드).
+# [테스트 모드 설정]
+# 0으로 설정하면 '모든 글'을 감지하지만, 아래 로직에서 '최신글 1개'만 남깁니다.
+# 테스트가 끝나면 다시 None으로 돌려놓으세요.
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": None,      # 📢 전체공지 (doc_no 기준)
-    "academic": None,     # 🎓 학사공지 (bltn_no 기준)
-    "electronic": None    # ⚡ 전자공학부 (no 기준)
+    "general": 0,      # 📢 전체공지 (0으로 두면 최신글 1개 자동 발송)
+    "academic": 0,     # 🎓 학사공지 (0으로 두면 최신글 1개 자동 발송)
+    "electronic": 0    # ⚡ 전자공학부 (0으로 두면 최신글 1개 자동 발송)
 }
+# 실제 사용 시:
+# TEST_IDS = { "general": None, "academic": None, "electronic": None }
 
 # -----------------------------------------------------------
 # [게시판 설정]
 # -----------------------------------------------------------
 BOARDS = [
     {
-        "id_key": "general", # TEST_IDS의 키와 일치
+        "id_key": "general",
         "name": "📢 전체공지",
         "url": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/list.action?bbs_cde=1&menu_idx=67",
         "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/viewBtin.action?btin.bbs_cde=1&btin.appl_no=000000&menu_idx=67&btin.doc_no=",
@@ -33,7 +34,7 @@ BOARDS = [
         "id_key": "academic",
         "name": "🎓 학사공지",
         "url": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42",
-        "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdViewBtin.action?menu_idx=42",
+        "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdViewBtin.action?menu_idx=42&bbs_cde=stu_812&note_div=row&bltn_no=",
         "file": "latest_id_academic.txt",
         "type": "knu_academic",
         "env_key": "WEBHOOK_ACADEMIC"
@@ -69,7 +70,6 @@ def get_post_content(url):
         requests.packages.urllib3.disable_warnings()
         headers = COMMON_HEADERS.copy()
         
-        # 전자공학부는 Referer가 자기 자신이어야 잘 됨
         if "see.knu.ac.kr" in url:
             headers['Referer'] = "https://see.knu.ac.kr/"
         else:
@@ -79,9 +79,7 @@ def get_post_content(url):
         response.encoding = 'UTF-8'
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # 본문 찾기 후보군 (경북대 본관 + 전자공학부 스타일)
-        # .board-view : 전자공학부 스타일
-        # .board_cont : 경북대 본관 스타일
+        # 학사공지(.board_cont) 포함 다양한 클래스 시도
         candidates = ['.board_cont', '.board-view', '.view_con', '.content', '.tbl_view', '.board_view_con']
         
         content_div = None
@@ -89,43 +87,43 @@ def get_post_content(url):
             content_div = soup.select_one(selector)
             if content_div: break
         
+        if not content_div:
+            tds = soup.select("td")
+            for td in tds:
+                if len(td.get_text(strip=True)) > 100: 
+                    content_div = td
+                    break
+
         if content_div:
             return content_div.get_text(separator="\n", strip=True)
         return "본문 내용을 찾을 수 없습니다."
     except Exception as e:
-        print(f"   본문 크롤링 에러: {e}")
-        return "본문 로딩 실패"
+        return f"본문 로딩 실패: {e}"
 
 # -----------------------------------------------------------
 # [기능 2] 디스코드 전송
 # -----------------------------------------------------------
 def send_discord_message(webhook_url, board_name, title, link, doc_id, original_content):
-    # 본문 미리보기 (500자 제한)
     clean = original_content[:500] + ("..." if len(original_content) > 500 else "")
-    
-    # 내용이 너무 없으면 안내 메시지
     if not clean.strip():
-        clean = "(본문 내용이 없거나 이미지를 포함한 게시글입니다)"
-
-    description = f"**[본문 미리보기]**\n{clean}"
-    footer_text = f"{board_name} • ID: {doc_id}"
+        clean = "(본문 없음 혹은 이미지 게시글)"
 
     data = {
         "content": f"🔔 **{board_name} 업데이트**",
         "embeds": [{
             "title": title,
-            "description": description,
+            "description": f"**[본문 미리보기]**\n{clean}",
             "url": link,
-            "color": 3447003, # Blue
-            "footer": {"text": footer_text}
+            "color": 3447003,
+            "footer": {"text": f"{board_name} • ID: {doc_id}"}
         }]
     }
     
     try:
         requests.post(webhook_url, json=data)
         print(f"🚀 [전송 성공] {title}")
-    except Exception as e:
-        print(f"❌ [전송 실패] {e}")
+    except:
+        pass
 
 # -----------------------------------------------------------
 # [메인] 로직
@@ -137,30 +135,26 @@ def main():
     for board in BOARDS:
         print(f"\n🔍 검사 중: {board['name']}")
         
-        # 1. 테스트 ID 확인
+        webhook_url = os.environ.get(board['env_key'])
+        if not webhook_url:
+            print(f"   🚨 웹훅({board['env_key']}) 미설정. 건너뜀.")
+            continue
+
+        # 1. ID 로드 (테스트 모드 체크)
         test_id = TEST_IDS.get(board['id_key'])
-        
         if test_id is not None:
             last_id = int(test_id)
-            print(f"   ⚠️ [테스트 모드] 강제 기준 ID: {last_id}")
+            print(f"   ⚠️ [테스트 모드] 모든 글을 검색 후 최신 1개만 보냅니다.")
         else:
-            # 파일에서 읽기
             file_path = os.path.join(BASE_DIR, board['file'])
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    last_id = int(content) if content else 0
+                    last_id = int(f.read().strip() or 0)
             except FileNotFoundError:
                 last_id = 0
-            print(f"   📂 저장된 ID (파일): {last_id}")
+            print(f"   📂 저장된 ID: {last_id}")
 
-        # 2. 웹훅 URL 확인
-        webhook_url = os.environ.get(board['env_key'])
-        if not webhook_url:
-            print(f"   🚨 경고: 웹훅({board['env_key']}) 없음. 건너뜀.")
-            continue
-
-        # 3. 목록 접속
+        # 2. 접속
         try:
             headers = COMMON_HEADERS.copy()
             headers['Referer'] = board['url']
@@ -172,7 +166,7 @@ def main():
             continue
 
         rows = soup.select("tbody > tr")
-        if not rows: rows = soup.select("tr")
+        if not rows: rows = soup.select("tr") 
 
         new_posts = []
 
@@ -180,41 +174,30 @@ def main():
             cols = row.select("td")
             if len(cols) < 2: continue
             
-            # 제목 찾기 (a 태그)
-            title_tag = cols[1].find("a") 
-            if not title_tag: 
-                # 전자공학부 등 구조가 다를 경우를 대비해 row 전체 검색
-                title_tag = row.find("a")
-            
+            title_tag = row.find("a")
             if not title_tag: continue
 
             title = title_tag.text.strip()
             href = title_tag.get('href', '')
 
-            # 4. ID 추출 및 링크 생성
             doc_id = 0
             real_link = ""
             
             try:
-                # A. 전자공학부 (no=...)
                 if board['type'] == 'see_knu':
                     match = re.search(r"no=(\d+)", href)
                     if match:
                         doc_id = int(match.group(1))
                         real_link = board['view_base'] + str(doc_id)
 
-                # B. 학사공지 (bltn_no, inpt_nbr)
                 elif board['type'] == 'knu_academic':
                     numbers = re.findall(r"(\d+)", href)
-                    if numbers:
-                        doc_id = int(numbers[0])
-                        # 링크 조립 (inpt_nbr이 있으면 같이 넣음)
-                        if len(numbers) >= 2:
-                             real_link = f"{board['view_base']}&btin.bltn_no={numbers[0]}&btin.inpt_nbr={numbers[1]}"
-                        else:
-                             real_link = f"{board['view_base']}&btin.bltn_no={numbers[0]}"
+                    for num in numbers:
+                        if len(num) > 10: 
+                            doc_id = int(num)
+                            real_link = f"{board['view_base']}{doc_id}"
+                            break
 
-                # C. 전체공지 (doc_no)
                 else: 
                     match = re.search(r"(\d+)", href)
                     if match:
@@ -224,32 +207,32 @@ def main():
             except Exception:
                 continue
 
-            # 5. 새 글 판단
             if doc_id > 0 and doc_id > last_id:
-                print(f"   ✅ 새 글 발견: {doc_id} - {title}")
                 new_posts.append({'id': doc_id, 'title': title, 'link': real_link})
 
-        # 6. 전송 및 저장
+        # 3. 전송 및 저장
         if new_posts:
-            # 과거순 정렬
             new_posts.sort(key=lambda x: x['id'])
             
+            # ★ [테스트 모드용 로직] 
+            # 테스트 중(test_id is not None)이면, 리스트의 가장 마지막(최신) 1개만 남김
+            if test_id is not None:
+                print(f"   ⚠️ [테스트] 발견된 {len(new_posts)}개 중 가장 최신 글 1개만 선택합니다.")
+                new_posts = new_posts[-1:]
+            
             for post in new_posts:
-                # 본문 긁어오기
                 content = get_post_content(post['link'])
-                # 디스코드 전송
                 send_discord_message(webhook_url, board['name'], post['title'], post['link'], post['id'], content)
                 time.sleep(1)
 
-            # ★ 중요: 테스트 모드가 아닐 때만 파일 업데이트
+            # 테스트 아닐 때만 파일 저장
             if test_id is None:
                 max_id = max(p['id'] for p in new_posts)
-                file_path = os.path.join(BASE_DIR, board['file'])
-                with open(file_path, 'w', encoding='utf-8') as f:
+                with open(os.path.join(BASE_DIR, board['file']), 'w', encoding='utf-8') as f:
                     f.write(str(max_id))
-                print(f"   💾 파일 업데이트 완료: {max_id}")
+                print(f"   💾 ID 업데이트: {max_id}")
             else:
-                print("   ⚠️ [테스트 모드] 파일 저장을 건너뜁니다.")
+                print("   🚫 [테스트] 파일 저장을 건너뜁니다.")
         else:
             print("   💤 새 글 없음")
 
