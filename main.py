@@ -1,172 +1,108 @@
-import time
-import os
-import openai
 import requests
 from bs4 import BeautifulSoup
+import os
+import re  # 정규표현식 사용 (숫자 추출용)
 
-# Selenium 관련 라이브러리
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
+# 게시판 목록 URL
+LIST_URL = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/list.action?bbs_cde=1&menu_idx=67"
+# 게시판 상세 보기 기본 URL (경북대 패턴 분석 기반)
+VIEW_URL_BASE = "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/view.action?bbs_cde=1&menu_idx=67&bbs_num="
 
-# --------------------------------------
-# 환경변수 세팅
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# URL 설정
-NOTICE_URL = "https://www.knu.ac.kr/wbbs/wbbs/btin/stdList.action?menu_idx=42"
-LAST_ID_FILE = "last_id.txt"
+def send_discord_message(webhook_url, title, link, post_id):
+    data = {
+        "content": "🔔 **경북대 학사공지 업데이트**",
+        "embeds": [
+            {
+                "title": title,
+                "description": f"새로운 공지사항이 올라왔습니다.\n게시글 번호: {post_id}",
+                "url": link,  # 여기 클릭하면 바로 이동됨
+                "color": 12916017,
+                "footer": {
+                    "text": "바로가기를 클릭해서 내용을 확인하세요."
+                }
+            }
+        ]
+    }
+    requests.post(webhook_url, json=data)
 
-# --------------------------------------
-def fetch_latest_notice_selenium():
-    print("Bot: 가상 브라우저(Chrome) 세팅 중...")
+def crawl_knu_notice():
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0'
+    }
+    # SSL 인증서 검증 무시 (verify=False)
+    response = requests.get(LIST_URL, headers=headers, verify=False)
+    response.encoding = 'UTF-8'
     
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new") # 화면 없이 실행
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    # [핵심] 봇 탐지 방지 옵션
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-    try:
-        # 크롬 드라이버 자동 설치 및 실행
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        print(f"Bot: 페이지 접속 시도 -> {NOTICE_URL}")
-        driver.get(NOTICE_URL)
-        
-        # 페이지 로딩 대기 (3초)
-        time.sleep(3)
-        
-        # 현재 페이지 제목 확인 (디버깅용)
-        print(f"Bot: 현재 페이지 제목 -> {driver.title}")
-        
-        if "KNU STUD" in driver.title:
-            print("❌ 여전히 리다이렉트 되었습니다. (IP 차단 가능성 높음)")
-            driver.quit()
-            return None
-
-        # HTML 가져오기
-        html = driver.page_source
-        driver.quit() # 브라우저 종료
-        
-        # BeautifulSoup으로 파싱
-        soup = BeautifulSoup(html, "html.parser")
-        
-        # 게시글 행 찾기
-        rows = soup.select("tbody tr")
-        if not rows:
-             rows = soup.select(".board_list tbody tr")
-             
-        if not rows:
-            print("❌ 게시판 테이블을 못 찾았습니다.")
-            return None
-
-        # 최신글 추출 로직
-        latest_notice = None
-        for row in rows:
-            subject_td = row.select_one("td.subject a") or row.select_one("td.title a")
-            num_td = row.select_one("td.num")
+    soup = BeautifulSoup(response.text, 'html.parser')
+    rows = soup.select("tbody > tr")
+    
+    latest_post = None
+    
+    for row in rows:
+        cols = row.select("td")
+        if len(cols) < 2:
+            continue
             
-            # '공지' 배지 제외
-            if num_td and not num_td.get_text(strip=True).isdigit():
-                continue
+        num_text = cols[0].text.strip()
+        
+        # '공지'가 아닌 숫자(일반글)인 경우만
+        if num_text.isdigit():
+            title_tag = cols[1].find("a")
+            title = title_tag.text.strip()
+            
+            # href 속성 가져오기 (예: "javascript:fn_view('12345');")
+            href_content = title_tag.get('href', '')
+            
+            # 정규식으로 숫자만 추출
+            # \d+ 는 숫자가 연속으로 나오는 패턴을 찾음
+            match = re.search(r"(\d+)", href_content)
+            
+            if match:
+                real_id = match.group(1) # 추출된 숫자 (예: 12345)
                 
-            if not subject_td:
-                continue
+                # 상세 페이지로 가는 진짜 URL 만들기
+                real_link = VIEW_URL_BASE + real_id
+                
+                latest_post = {'id': real_id, 'title': title, 'link': real_link}
+                break # 최신글 하나만 찾고 종료
 
-            title = subject_td.get_text(strip=True)
-            href = subject_td.get("href")
-            
-            # 링크 파싱
-            post_id = None
-            full_url = NOTICE_URL
-            
-            if href:
-                if "btin_idx=" in href:
-                    post_id = href.split("btin_idx=")[1].split("&")[0]
-                    full_url = f"https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/view.action?btin_idx={post_id}&menu_idx=42"
-                elif "nttId=" in href:
-                    post_id = href.split("nttId=")[1].split("&")[0]
-                    full_url = f"https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/view.action?nttId={post_id}&menu_idx=42"
-            
-            if not post_id:
-                post_id = title
+    return latest_post
 
-            latest_notice = {"id": post_id, "title": title, "url": full_url}
-            break
-
-        return latest_notice
-
-    except Exception as e:
-        print(f"❌ Selenium 에러: {e}")
-        return None
-
-# --------------------------------------
-def summarize_text(title):
-    if not OPENAI_API_KEY:
-        return title
-    
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "너는 대학교 학사공지 요약 봇이야."},
-                {"role": "user", "content": f"이 제목을 보고 핵심 내용을 한 문장으로 요약해줘: {title}"}
-            ]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"⚠️ 요약 API 에러: {e}")
-        return title
-
-# --------------------------------------
-def send_discord(notice, summary):
-    if not DISCORD_WEBHOOK:
-        return
-
-    message = f"📢 **[경북대 학사공지]**\n{notice['title']}\n\n📝 **요약**: {summary}\n🔗 [바로가기]({notice['url']})"
-    
-    try:
-        requests.post(DISCORD_WEBHOOK, json={"content": message})
-        print("✅ Discord 전송 성공")
-    except Exception as e:
-        print(f"❌ 전송 실패: {e}")
-
-# --------------------------------------
 def main():
-    print("✅ Selenium 봇 실행 시작 (v4.0)")
+    new_post = crawl_knu_notice()
     
-    latest = fetch_latest_notice_selenium()
-    
-    if not latest:
-        print("❌ 공지를 가져오지 못하고 종료합니다.")
+    if not new_post:
+        print("새로운 게시글을 찾을 수 없습니다.")
         return
 
-    last_id = ""
-    if os.path.exists(LAST_ID_FILE):
-        with open(LAST_ID_FILE, "r", encoding='utf-8') as f:
+    latest_id_path = os.path.join(BASE_DIR, 'latest_id.txt')
+    
+    # 저장된 ID 불러오기
+    try:
+        with open(latest_id_path, 'r', encoding='utf-8') as f:
             last_id = f.read().strip()
+    except FileNotFoundError:
+        last_id = "0"
 
-    print(f"🔍 가져온 최신글: {latest['title']}")
-    
-    if latest["id"] == last_id:
-        print("👌 이미 보낸 공지입니다.")
-        return
+    print(f"최신글 ID: {new_post['id']} (제목: {new_post['title']})")
 
-    print("🚀 새 공지 발견! 디스코드로 전송합니다...")
-    summary = summarize_text(latest['title'])
-    send_discord(latest, summary)
-
-    with open(LAST_ID_FILE, "w", encoding='utf-8') as f:
-        f.write(latest["id"])
+    # ID 비교 (문자열이 아닌 정수로 비교)
+    if int(new_post['id']) > int(last_id):
+        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
+        
+        if webhook_url:
+            send_discord_message(webhook_url, new_post['title'], new_post['link'], new_post['id'])
+            
+            # ID 업데이트
+            with open(latest_id_path, 'w', encoding='utf-8') as f:
+                f.write(new_post['id'])
+        else:
+            print("WebHook URL 미설정")
+    else:
+        print("새로운 공지가 없습니다.")
 
 if __name__ == "__main__":
+    requests.packages.urllib3.disable_warnings()
     main()
