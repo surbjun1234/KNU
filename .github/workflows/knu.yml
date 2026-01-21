@@ -2,10 +2,9 @@ name: 학사공지 자동 알림
 
 on:
   schedule:
-    - cron: '0 * * * *' # 매시간 정각 실행
+    - cron: '*/30 * * * *' # 30분마다 실행 (권장)
   workflow_dispatch: # 수동 실행 버튼 활성화
 
-# last_id.txt 파일을 저장소에 쓰기 위한 권한 설정
 permissions:
   contents: write
 
@@ -13,39 +12,39 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      # main.py에서 사용하는 이름과 똑같이 맞춰야 합니다.
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      PYTHONUNBUFFERED: "1" # [필수] 로그가 지연 없이 바로 출력되도록 설정
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      PYTHONUNBUFFERED: "1"
+
     steps:
-      - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
-      # 파이썬 3.10 설정 (pip 캐시 기능 켜기)
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          cache: 'pip'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
 
-      # [중요] Selenium 및 필수 라이브러리 설치
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 openai selenium webdriver-manager
+    # [수정됨] google-generativeai 추가, 불필요한 selenium/openai 제거
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 google-generativeai
 
-      # 크롤링 스크립트 실행
-      - name: Run main.py
-        run: python main.py
+    - name: Run main.py
+      run: python main.py
 
-      # 변경된 last_id.txt가 있다면 저장소에 반영 (Commit & Push)
-      - name: Commit and Push last_id
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # 파일이 존재하는지 확인 후 add
-          if [ -f last_id.txt ]; then
-            git add last_id.txt
-          fi
-          
-          # 변경사항이 있을 때만 커밋하고 푸시 (에러 방지)
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update last_id [skip ci]" && git push)
+    # [수정됨] last_id.txt -> latest_id.txt 로 이름 변경 (Python 코드와 일치시킴)
+    - name: Commit and Push latest_id
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # latest_id.txt 파일이 있는지 확인
+        if [ -f latest_id.txt ]; then
+          git add latest_id.txt
+        fi
+        
+        # 변경사항이 있을 때만 커밋
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update latest_id [skip ci]" && git push)
