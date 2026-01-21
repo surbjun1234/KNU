@@ -2,8 +2,8 @@ name: 학사공지 자동 알림
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # 30분마다 실행 (권장)
-  workflow_dispatch: # 수동 실행 버튼 활성화
+    - cron: '*/30 * * * *' # 30분마다 실행
+  workflow_dispatch: # 수동 실행 버튼
 
 permissions:
   contents: write
@@ -12,9 +12,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # main.py에서 사용하는 이름과 똑같이 맞춰야 합니다.
-      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # 설정한 웹훅 3개를 가져옵니다.
+      WEBHOOK_GENERAL: ${{ secrets.WEBHOOK_GENERAL }}
+      WEBHOOK_ACADEMIC: ${{ secrets.WEBHOOK_ACADEMIC }}
+      WEBHOOK_ELECTRONIC: ${{ secrets.WEBHOOK_ELECTRONIC }}
       PYTHONUNBUFFERED: "1"
 
     steps:
@@ -26,25 +27,25 @@ jobs:
         python-version: '3.10'
         cache: 'pip'
 
-    # [수정됨] google-generativeai 추가, 불필요한 selenium/openai 제거
+    # 제미나이(google-generativeai)는 잠시 뺍니다.
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 google-generativeai
+        pip install requests beautifulsoup4
 
     - name: Run main.py
       run: python main.py
 
-    # [수정됨] last_id.txt -> latest_id.txt 로 이름 변경 (Python 코드와 일치시킴)
-    - name: Commit and Push latest_id
+    # 3개의 txt 파일을 모두 감지해서 저장합니다.
+    - name: Commit and Push IDs
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # latest_id.txt 파일이 있는지 확인
-        if [ -f latest_id.txt ]; then
-          git add latest_id.txt
+        # txt 파일이 하나라도 있으면 스테이징
+        if ls *.txt 1> /dev/null 2>&1; then
+          git add *.txt
         fi
         
-        # 변경사항이 있을 때만 커밋
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Update latest_id [skip ci]" && git push)
+        # 변경사항이 있을 때만 커밋 & 푸시
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update Notice IDs [skip ci]" && git push)
