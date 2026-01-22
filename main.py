@@ -6,13 +6,12 @@ import time
 
 # -----------------------------------------------------------
 # [테스트 모드]
-# 전자공학부(electronic)를 0으로 설정해뒀습니다.
-# 실행 후 로그가 잘 뜨고 알림이 오면, 다시 None으로 바꾸세요.
+# 테스트가 끝나면 모두 None으로 설정하세요.
 # -----------------------------------------------------------
 TEST_IDS = {
     "general": None,    
     "academic": None,    
-    "electronic": 0   # ⚡ 0으로 설정: 전자공학부 최신글 1개를 강제로 가져와 봅니다.
+    "electronic": None   
 }
 
 # -----------------------------------------------------------
@@ -74,8 +73,8 @@ def get_post_content(url):
         response.encoding = 'UTF-8'
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # 학사공지(.board_cont) 및 전자공학부 대응
-        candidates = ['.board_cont', '.board-view', '.view_con', '.content', '.tbl_view', '.board_view_con']
+        # ★ 수정됨: .contentview (전자공학부) 최우선 적용
+        candidates = ['.contentview', '.board_cont', '.board-view', '.view_con', '.content', '.tbl_view']
         
         content_div = None
         for selector in candidates:
@@ -83,7 +82,6 @@ def get_post_content(url):
             if content_div: break
         
         if not content_div:
-            # 테이블 td 중에서 내용이 긴 것 찾기 (최후의 수단)
             tds = soup.select("td")
             for td in tds:
                 if len(td.get_text(strip=True)) > 100: 
@@ -129,7 +127,7 @@ def main():
             print(f"   🚨 웹훅 미설정. 건너뜀.")
             continue
 
-        # 1. ID 설정
+        # 1. ID 로드
         test_id = TEST_IDS.get(board['id_key'])
         if test_id is not None:
             last_id = int(test_id)
@@ -154,7 +152,6 @@ def main():
             print(f"   🚨 접속 실패: {e}")
             continue
 
-        # 3. 행(Row) 찾기 - 전자공학부 tr 확인
         rows = soup.select("tbody > tr")
         if not rows: rows = soup.select("tr") 
 
@@ -164,37 +161,33 @@ def main():
             cols = row.select("td")
             if len(cols) < 2: continue
             
-            # 제목 태그 찾기
             title_tag = row.find("a")
             if not title_tag: continue
 
             title = title_tag.text.strip()
-            href = title_tag.get('href', '')
+            
+            # ★ 제목 수정 로직: [학적] -> <학적>
+            # 대괄호([]) 안에 있는 모든 문자를 꺾쇠(<>)로 바꿈
+            title = re.sub(r'\[(.*?)\]', r'<\1>', title)
 
+            href = title_tag.get('href', '')
             doc_id = 0
             real_link = ""
             
             try:
-                # A. 전자공학부 (ID 추출 로직 강화)
                 if board['type'] == 'see_knu':
                     # 1순위: no=숫자
                     match = re.search(r"no=(\d+)", href)
                     if match:
                         doc_id = int(match.group(1))
                     else:
-                        # 2순위: 링크에 있는 가장 마지막 숫자 (fallback)
-                        # 예: view.php?id=1234
+                        # 2순위: 링크 내 마지막 숫자
                         nums = re.findall(r"(\d+)", href)
-                        if nums:
-                            doc_id = int(nums[-1])
+                        if nums: doc_id = int(nums[-1])
                     
                     if doc_id > 0:
                         real_link = board['view_base'] + str(doc_id)
-                        # 디버깅 로그: 전자공학부 글을 잘 보고 있는지 확인
-                        if test_id is not None:
-                            print(f"   (디버그) 발견 - ID:{doc_id} / 제목:{title[:10]}... / 링크:{href}")
 
-                # B. 학사공지
                 elif board['type'] == 'knu_academic':
                     numbers = re.findall(r"(\d+)", href)
                     for num in numbers:
@@ -203,7 +196,6 @@ def main():
                             real_link = f"{board['view_base']}{doc_id}"
                             break
 
-                # C. 전체공지
                 else: 
                     match = re.search(r"(\d+)", href)
                     if match:
@@ -220,7 +212,6 @@ def main():
         if new_posts:
             new_posts.sort(key=lambda x: x['id'])
             
-            # 테스트 모드면 최신글 1개만
             if test_id is not None:
                 new_posts = new_posts[-1:]
             
