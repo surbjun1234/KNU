@@ -6,7 +6,8 @@ import time
 from urllib.parse import urljoin
 
 # -----------------------------------------------------------
-# [설정] 0 = 테스트용(무조건 전송) / None = 실사용(새 글만 전송)
+# [테스트 모드 설정]
+# 0 = 최신글 2개 강제 전송 / None = 새 글이 있을 때만 전송
 # -----------------------------------------------------------
 TEST_IDS = {
     "general": 0,    
@@ -14,6 +15,9 @@ TEST_IDS = {
     "electronic": 0   
 }
 
+# -----------------------------------------------------------
+# [게시판 설정]
+# -----------------------------------------------------------
 BOARDS = [
     {
         "id_key": "general",
@@ -27,6 +31,7 @@ BOARDS = [
     {
         "id_key": "academic",
         "name": "🎓 학사공지",
+        # 학사공지 바로가기 주소 수정 반영
         "url": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42",
         "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdViewBtin.action?search_type=&search_text=&popupDeco=&note_div=row&menu_idx=42&bbs_cde=stu_812&bltn_no=",
         "file": "latest_id_academic.txt",
@@ -48,52 +53,63 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # -----------------------------------------------------------
-# [제미나이 요약 함수]
+# [Gemini 2.5 Flash-Lite 요약 함수]
 # -----------------------------------------------------------
 def summarize_content(content):
     if not GEMINI_API_KEY:
-        return "⚠️ 요약 실패: API 키가 설정되지 않았습니다."
+        return "⚠️ 요약 실패: Gemini API 키가 설정되지 않았습니다."
     
-    if len(content) < 100: return content
+    if len(content) < 150: # 내용이 너무 짧으면 요약 없이 반환
+        return content
 
-    # Gemini 2.5 Flash-Lite 모델 적용 URL
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
-    prompt = f"아래 대학교 공지사항 본문을 학생들이 보기 편하게 제목은 뺴고 핵심만 4줄 이내 번호 리스트로 요약해줘. 날짜와 장소는 반드시 포함해:\n\n{content[:3000]}"
+    prompt = f"아래 대학교 공지사항 본문을 핵심만 3줄 이내의 번호 리스트로 요약해줘. 날짜, 시간, 장소는 반드시 포함해줘:\n\n{content[:3500]}"
     
-    data = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 600, "temperature": 0.2}}
+    data = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": 600, "temperature": 0.1}
+    }
 
     try:
         response = requests.post(url, headers=headers, json=data, timeout=15)
         res_json = response.json()
-        return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
+        summary = res_json['candidates'][0]['content']['parts'][0]['text']
+        return summary.strip()
     except:
         return f"❗ 요약 생성 실패 (미리보기):\n{content[:300]}..."
 
 # -----------------------------------------------------------
-# [본문 추출 및 정리]
+# [텍스트 정리 및 본문 추출]
 # -----------------------------------------------------------
-def clean_text(text):
+def clean_electronic_text(text):
     text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'(?<!^)(\s)([가-하]\.)', r'\n\n\2', text)
+    text = re.sub(r'(?<!^)(\s)(\d+\))', r'\n\2', text)
+    text = re.sub(r'(?<!^)(\s)([※-□o·])', r'\n\2', text)
     return text.strip()
 
 def get_post_content(url):
     try:
+        requests.packages.urllib3.disable_warnings()
         headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, verify=False, timeout=10)
-        res.encoding = 'UTF-8'
-        soup = BeautifulSoup(res.text, 'html.parser')
+        if "see.knu.ac.kr" in url: headers['Referer'] = "https://see.knu.ac.kr/"
+        else: headers['Referer'] = "https://www.knu.ac.kr/"
         
-        # 본문 영역 탐색
+        response = requests.get(url, headers=headers, verify=False, timeout=10)
+        response.encoding = 'UTF-8'
+        soup = BeautifulSoup(response.text, 'html.parser')
         content_div = soup.select_one('.contentview') or soup.select_one('.board_cont') or soup.select_one('.view_con')
-        if not content_div: return "본문 내용을 찾을 수 없습니다."
         
-        return clean_text(content_div.get_text(separator=" "))
+        if content_div:
+            raw_text = content_div.get_text(separator=" ")
+            return clean_electronic_text(raw_text)
+        return "본문 내용을 찾을 수 없습니다."
     except:
         return "본문 로딩 실패"
 
 # -----------------------------------------------------------
-# [디스코드 전송]
+# [디스코드 전송 함수]
 # -----------------------------------------------------------
 def send_discord_message(webhook_url, board_name, title, link, doc_id, summary):
     if not webhook_url: return
@@ -107,103 +123,84 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, summary):
             "footer": {"text": f"ID: {doc_id}"}
         }]
     }
-    res = requests.post(webhook_url, json=data)
-    if res.status_code in [200, 204]:
-        print(f"   🚀 전송 성공: {title[:20]}...")
-    else:
-        print(f"   ❌ 전송 실패: {res.status_code}")
+    requests.post(webhook_url, json=data)
 
-# -----------------------------------------------------------
-# [메인 로직]
-# -----------------------------------------------------------
 def main():
-    print("--- [크롤러 + Gemini 요약 시작] ---")
     requests.packages.urllib3.disable_warnings()
-
+    print("--- [크롤러 시작] ---")
+    
     for board in BOARDS:
-        print(f"\n🔍 {board['name']} 확인 중...")
-        main_webhook = os.environ.get(board['env_key'])
+        print(f"\n🔍 검사 중: {board['name']}")
+        main_webhook_url = os.environ.get(board['env_key'])
         
-        # ID 파일 읽기
+        test_id = TEST_IDS.get(board['id_key'])
+        is_test_mode = test_id is not None
+        
         file_path = os.path.join(BASE_DIR, board['file'])
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 last_id = int(f.read().strip() or 0)
         except: last_id = 0
 
-        # 게시판 접속
         try:
-            res = requests.get(board['url'], headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
-            res.encoding = 'UTF-8'
+            res = requests.get(board['url'], headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=10)
             soup = BeautifulSoup(res.text, 'html.parser')
-            rows = soup.select("tbody tr")
-        except Exception as e:
-            print(f"   🚨 접속 에러: {e}"); continue
+            rows = soup.select("tbody > tr") or soup.select("tr")
+        except: continue
 
         new_posts = []
         for row in rows:
+            cols = row.select("td")
+            if len(cols) < 2: continue
             a_tag = row.find("a")
             if not a_tag: continue
-            
+
             title = " ".join(a_tag.get_text().split())
-            href = a_tag.get('href', '')
+            current_tag = None
             
-            # ID 추출
+            # 전자공학부 카테고리 태그 로직
+            if board['id_key'] == 'electronic':
+                title = re.sub(r'\[(.*?)\]', r'<\1>', title)
+                title = re.sub(r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s|$)", r'<\1>', title)
+                match = re.search(r'<(.*?)>', title)
+                if match: current_tag = match.group(1)
+
+            href = a_tag.get('href', '')
             doc_id = 0
             if board['type'] == 'see_knu':
-                match = re.search(r"fidx=(\d+)", href) or re.search(r"no=(\d+)", href)
-                if match: doc_id = int(match.group(1))
+                id_match = re.search(r"no=(\d+)", href) or re.findall(r"(\d+)", href)
+                doc_id = int(id_match.group(1)) if hasattr(id_match, 'group') else int(max(id_match, key=int))
             else:
-                match = re.search(r"(\d+)", href)
-                if match: doc_id = int(match.group(1))
+                id_match = re.search(r"(\d+)", href)
+                if id_match: doc_id = int(id_match.group(1))
 
-            # 새 글 판정
-            if doc_id > 0 and (TEST_IDS[board['id_key']] == 0 or doc_id > last_id):
+            if doc_id > last_id or is_test_mode:
                 if not any(p['id'] == doc_id for p in new_posts):
-                    # 전자공학부 태그 추출
-                    tag = None
-                    if board['id_key'] == 'electronic':
-                        title = re.sub(r'\[(.*?)\]', r'<\1>', title)
-                        t_match = re.search(r'<(.*?)>', title)
-                        if t_match: tag = t_match.group(1)
-                    
-                    new_posts.append({'id': doc_id, 'title': title, 'link': board['view_base']+str(doc_id), 'tag': tag})
+                    new_posts.append({'id': doc_id, 'title': title, 'link': board['view_base']+str(doc_id), 'tag': current_tag})
 
         if new_posts:
             new_posts.sort(key=lambda x: x['id'])
-            # 테스트 모드 시 최신 2개만
-            if TEST_IDS[board['id_key']] == 0: new_posts = new_posts[-2:]
-
+            if is_test_mode: new_posts = new_posts[-2:]
+            
             for post in new_posts:
-                content = get_post_content(post['link'])
-                summary = summarize_content(content)
+                raw_content = get_post_content(post['link'])
+                summary = summarize_content(raw_content) # AI 요약 실행
                 
                 # 1. 메인 채널 전송
-                send_discord_message(main_webhook, board['name'], post['title'], post['link'], post['id'], summary)
-                
+                send_discord_message(main_webhook_url, board['name'], post['title'], post['link'], post['id'], summary)
+
                 # 2. 전자공학부 세부 카테고리 전송
                 if board['id_key'] == 'electronic' and post['tag']:
                     tag = post['tag']
-                    sub_key = None
-                    if "수업" in tag: sub_key = "WEBHOOK_ELEC_CLASS"
-                    elif "학적" in tag: sub_key = "WEBHOOK_ELEC_RECORD"
-                    elif "취업" in tag: sub_key = "WEBHOOK_ELEC_JOB"
-                    elif "장학" in tag: sub_key = "WEBHOOK_ELEC_SCHOLARSHIP"
-                    elif "행사" in tag: sub_key = "WEBHOOK_ELEC_EVENT"
-                    elif "기타" in tag: sub_key = "WEBHOOK_ELEC_ETC"
-                    
-                    if sub_key:
-                        sub_webhook = os.environ.get(sub_key)
+                    env_key = f"WEBHOOK_ELEC_{'CLASS' if '수업' in tag else 'RECORD' if '학적' in tag else 'JOB' if '취업' in tag else 'SCHOLARSHIP' if '장학' in tag else 'EVENT' if '행사' in tag else 'ETC' if '기타' in tag else ''}"
+                    sub_webhook = os.environ.get(env_key)
+                    if sub_webhook:
                         send_discord_message(sub_webhook, f"{board['name']} ({tag})", post['title'], post['link'], post['id'], summary)
-                
-                time.sleep(1)
 
-            # 최신 ID 저장
-            if TEST_IDS[board['id_key']] is None:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(str(max(p['id'] for p in new_posts)))
+            if not is_test_mode:
+                with open(file_path, 'w', encoding='utf-8') as f: f.write(str(max(p['id'] for p in new_posts)))
         else:
-            print("   💤 새 글 없음")
+            print("💤 새 글 없음")
 
 if __name__ == "__main__":
     main()
