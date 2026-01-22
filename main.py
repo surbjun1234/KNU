@@ -148,7 +148,7 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
             "description": f"✨ Gemini 요약\n{summary_text}",
             "url": link,
             "color": 3447003,
-            "footer": {"text": f"{board_name} • ID: {doc_id}"}
+            "footer": {"text": f"{board_name}"}
         }]
     }
     try:
