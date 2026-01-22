@@ -11,9 +11,9 @@ from urllib.parse import urljoin
 # None = 새 글이 있을 때만 전송 (파일 저장 함) -> 실사용
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": 0,    
-    "academic": 0,    
-    "electronic": 0   
+    "general": None,    
+    "academic": None,    
+    "electronic": None   
 }
 
 # -----------------------------------------------------------
@@ -42,8 +42,8 @@ BOARDS = [
         "id_key": "electronic",
         "name": "⚡ 전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
-        # ★ 수정됨: 알려주신 링크 구조 적용 (fidx 뒤에 번호 붙임)
-        "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&gtid=notice&fidx=",
+        # ★ 수정됨: 요청하신 깔끔한 주소 포맷 (pg=vv&fidx=)
+        "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&fidx=",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
         "env_key": "WEBHOOK_ELECTRONIC"
@@ -78,7 +78,7 @@ def get_post_content(url):
 
         content_div = None
 
-        # 1. 본문 찾기 (다양한 선택자 시도)
+        # 1. 본문 찾기
         candidates = ['.contentview', '#contentview', '.board_cont', '.board-view', '.view_con', '.content', '.tbl_view']
         
         for selector in candidates:
@@ -98,13 +98,10 @@ def get_post_content(url):
                 content_div = potential_areas[0][1]
 
         if content_div:
-            # 원본 텍스트 가져오기
             raw_text = content_div.get_text(separator="\n")
-            
-            # ★ [공백 청소 로직] 빈 줄 제거 및 앞뒤 공백 정리
+            # 공백 청소
             cleaned_lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
             text = '\n'.join(cleaned_lines)
-            
             return text
             
         return "본문 내용을 찾을 수 없습니다."
@@ -203,7 +200,7 @@ def main():
                         if nums: doc_id = max([int(n) for n in nums])
                     
                     if doc_id > 0:
-                        # ★ [링크 수정] 알려주신 주소 + ID
+                        # ★ [링크 수정] 깔끔한 주소 + ID
                         real_link = f"{board['view_base']}{doc_id}"
 
                 # B. 학사공지
