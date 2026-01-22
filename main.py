@@ -7,7 +7,8 @@ from urllib.parse import urljoin
 
 # -----------------------------------------------------------
 # [테스트 모드]
-# 테스트가 끝나면 모두 None으로 설정하세요.
+# 0 = 최신글 2개 강제 전송 (파일 저장 안 함)
+# None = 새 글만 전송 (파일 저장 함)
 # -----------------------------------------------------------
 TEST_IDS = {
     "general": None,    
@@ -41,7 +42,8 @@ BOARDS = [
         "id_key": "electronic",
         "name": "⚡ 전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
-        "view_base": "https://see.knu.ac.kr/content/board/notice.html",
+        # ★ 수정됨: 링크를 직접 조립하기 위한 기본 주소
+        "view_base": "https://see.knu.ac.kr/content/board/notice.html?f=view&no=",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
         "env_key": "WEBHOOK_ELECTRONIC"
@@ -89,12 +91,25 @@ def get_post_content(url):
                     break
 
         if content_div:
-            return content_div.get_text(separator="\n", strip=True)
+            # 1. 텍스트 추출 (줄바꿈 포함)
+            text = content_div.get_text(separator="\n", strip=True)
+            
+            # ★ [공백 제거 로직 강화]
+            # 연속된 줄바꿈이 3번 이상(\n\n\n...) 나오면 2번(\n\n)으로 줄임
+            # 너무 휑한 공간을 없애줍니다.
+            text = re.sub(r'\n\s*\n+', '\n\n', text)
+            
+            # 본문 시작 부분의 불필요한 공백/줄바꿈 제거
+            text = text.lstrip()
+            
+            return text
+            
         return "본문 내용을 찾을 수 없습니다."
     except Exception as e:
         return f"본문 로딩 실패: {e}"
 
 def send_discord_message(webhook_url, board_name, title, link, doc_id, original_content):
+    # 미리보기 500자
     clean = original_content[:500] + ("..." if len(original_content) > 500 else "")
     if not clean.strip():
         clean = "(본문 없음 혹은 이미지)"
@@ -127,11 +142,13 @@ def main():
             print(f"   🚨 웹훅 미설정. 건너뜀.")
             continue
 
-        # 1. ID 로드
+        # 1. ID 로드 & 테스트 모드
         test_id = TEST_IDS.get(board['id_key'])
-        if test_id is not None:
-            last_id = int(test_id)
-            print(f"   ⚠️ [테스트] 최신글 1개만 가져옵니다.")
+        is_test_mode = test_id is not None
+        
+        if is_test_mode:
+            last_id = 0
+            print(f"   ⚠️ [테스트 모드] 최근 게시글 2개를 강제 전송합니다.")
         else:
             file_path = os.path.join(BASE_DIR, board['file'])
             try:
@@ -140,7 +157,7 @@ def main():
                     last_id = int(content) if content else 0
             except FileNotFoundError:
                 last_id = 0
-            print(f"   📂 읽어온 ID: {last_id}")
+            print(f"   📂 저장된 ID: {last_id}")
 
         # 2. 접속
         try:
@@ -165,7 +182,7 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
-            # 제목 정리
+            # 제목 정리: [학적] -> <학적>
             title = title_tag.text.strip()
             title = re.sub(r'\[(.*?)\]', r'<\1>', title)
 
@@ -174,24 +191,19 @@ def main():
             real_link = ""
             
             try:
-                # A. 전자공학부 (ID 추출 로직 개선)
+                # A. 전자공학부
                 if board['type'] == 'see_knu':
-                    # 1순위: no=숫자
                     match = re.search(r"no=(\d+)", href)
                     if match:
                         doc_id = int(match.group(1))
                     else:
-                        # 2순위: 링크에 있는 '가장 큰' 숫자 (페이지 번호 등 회피)
                         nums = re.findall(r"(\d+)", href)
-                        if nums:
-                            # 숫자 리스트 중 가장 큰 값을 ID로 사용
-                            doc_id = max([int(n) for n in nums])
+                        if nums: doc_id = max([int(n) for n in nums])
                     
                     if doc_id > 0:
-                        if href.startswith('?'):
-                            real_link = board['view_base'] + href
-                        else:
-                            real_link = urljoin(board['view_base'], href)
+                        # ★ [링크 수정] 
+                        # href를 믿지 않고, ID를 사용하여 주소를 '새로' 만듭니다.
+                        real_link = f"{board['view_base']}{doc_id}"
 
                 # B. 학사공지
                 elif board['type'] == 'knu_academic':
@@ -212,7 +224,6 @@ def main():
             except Exception:
                 continue
 
-            # 새 글 판단
             if doc_id > 0 and doc_id > last_id:
                 new_posts.append({'id': doc_id, 'title': title, 'link': real_link})
 
@@ -220,24 +231,22 @@ def main():
         if new_posts:
             new_posts.sort(key=lambda x: x['id'])
             
-            if test_id is not None:
-                new_posts = new_posts[-1:]
+            if is_test_mode:
+                new_posts = new_posts[-2:]
+                print(f"   ⚠️ [테스트] 발견된 글 중 최신 {len(new_posts)}개를 전송합니다.")
             
             for post in new_posts:
                 content = get_post_content(post['link'])
                 send_discord_message(webhook_url, board['name'], post['title'], post['link'], post['id'], content)
                 time.sleep(1)
 
-            # ★ ID 저장 (가장 중요)
-            if test_id is None:
+            if not is_test_mode:
                 max_id = max(p['id'] for p in new_posts)
-                file_path = os.path.join(BASE_DIR, board['file'])
-                with open(file_path, 'w', encoding='utf-8') as f:
+                with open(os.path.join(BASE_DIR, board['file']), 'w', encoding='utf-8') as f:
                     f.write(str(max_id))
-                # 디버깅: 실제로 저장된 번호를 출력
-                print(f"   💾 [저장 완료] 파일: {board['file']} / ID: {max_id}")
+                print(f"   💾 ID 업데이트: {max_id}")
             else:
-                print("   🚫 [테스트] 파일 저장 건너뜀")
+                print("   🚫 [테스트] 파일 저장 건너뜁니다.")
         else:
             print("   💤 새 글 없음")
 
