@@ -142,7 +142,7 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
     summary_text = get_gemini_summary(original_content)
 
     data = {
-        "content": f"**❗ New {board_name}",
+        "content": f"❗ New {board_name}",
         "embeds": [{
             "title": title,
             "description": f"✨ Gemini 요약\n{summary_text}",
