@@ -6,14 +6,14 @@ import time
 from urllib.parse import urljoin
 
 # -----------------------------------------------------------
-# [테스트 모드]
+# [테스트 모드 설정]
 # 0 = 최신글 2개 강제 전송 (파일 저장 안 함)
-# None = 새 글만 전송 (파일 저장 함)
+# None = 새 글이 있을 때만 전송 (파일 저장 함)
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": 0,    
-    "academic": 0,    
-    "electronic": 0
+    "general": None,    
+    "academic": None,    
+    "electronic": None   
 }
 
 # -----------------------------------------------------------
@@ -42,7 +42,6 @@ BOARDS = [
         "id_key": "electronic",
         "name": "⚡ 전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
-        # ★ 수정됨: 링크를 직접 조립하기 위한 기본 주소
         "view_base": "https://see.knu.ac.kr/content/board/notice.html?f=view&no=",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
@@ -76,31 +75,40 @@ def get_post_content(url):
         response.encoding = 'UTF-8'
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        candidates = ['.contentview', '.board_cont', '.board-view', '.view_con', '.content', '.tbl_view']
-        
         content_div = None
+
+        # 1단계: 알려주신 클래스(.contentview) 및 일반적인 후보군 검색
+        # 혹시 몰라 ID(#contentview)도 추가했습니다.
+        candidates = ['.contentview', '#contentview', '.board_cont', '.board-view', '.view_con', '.content', '.tbl_view']
+        
         for selector in candidates:
             content_div = soup.select_one(selector)
             if content_div: break
         
+        # 2단계(필살기): 클래스로 못 찾았다면, 페이지에서 글자가 가장 많은 구역(td, div)을 자동으로 찾음
         if not content_div:
-            tds = soup.select("td")
-            for td in tds:
-                if len(td.get_text(strip=True)) > 200: 
-                    content_div = td
-                    break
+            # 텍스트가 100자 이상인 모든 div와 td를 긁어모음
+            potential_areas = []
+            for tag in soup.find_all(['div', 'td']):
+                text_len = len(tag.get_text(strip=True))
+                if text_len > 50: # 기준 완화
+                    potential_areas.append((text_len, tag))
+            
+            # 글자 수 순서대로 정렬해서 1등을 본문으로 채택
+            if potential_areas:
+                potential_areas.sort(key=lambda x: x[0], reverse=True)
+                content_div = potential_areas[0][1]
 
         if content_div:
-            # 1. 텍스트 추출 (줄바꿈 포함)
+            # 텍스트 추출
             text = content_div.get_text(separator="\n", strip=True)
             
-            # ★ [공백 제거 로직 강화]
-            # 연속된 줄바꿈이 3번 이상(\n\n\n...) 나오면 2번(\n\n)으로 줄임
-            # 너무 휑한 공간을 없애줍니다.
+            # [공백 정리]
+            # 1. 과도한 줄바꿈(\n\n\n...)을 \n\n으로 압축
             text = re.sub(r'\n\s*\n+', '\n\n', text)
             
-            # 본문 시작 부분의 불필요한 공백/줄바꿈 제거
-            text = text.lstrip()
+            # 2. 본문 맨 앞/뒤의 공백 제거
+            text = text.strip()
             
             return text
             
@@ -109,7 +117,6 @@ def get_post_content(url):
         return f"본문 로딩 실패: {e}"
 
 def send_discord_message(webhook_url, board_name, title, link, doc_id, original_content):
-    # 미리보기 500자
     clean = original_content[:500] + ("..." if len(original_content) > 500 else "")
     if not clean.strip():
         clean = "(본문 없음 혹은 이미지)"
@@ -201,9 +208,11 @@ def main():
                         if nums: doc_id = max([int(n) for n in nums])
                     
                     if doc_id > 0:
-                        # ★ [링크 수정] 
-                        # href를 믿지 않고, ID를 사용하여 주소를 '새로' 만듭니다.
-                        real_link = f"{board['view_base']}{doc_id}"
+                        # 링크 조립 (href에 ?가 있으면 붙이고, 아니면 합침)
+                        if href.startswith('?'):
+                            real_link = board['view_base'] + href
+                        else:
+                            real_link = urljoin(board['view_base'], href)
 
                 # B. 학사공지
                 elif board['type'] == 'knu_academic':
@@ -224,7 +233,12 @@ def main():
             except Exception:
                 continue
 
+            # 3. 새 글 판단 & ★중복 방지★
             if doc_id > 0 and doc_id > last_id:
+                # 이미 이번 실행에서 담은 글이라면 건너뜀 (상단 고정 공지 중복 방지)
+                if any(post['id'] == doc_id for post in new_posts):
+                    continue
+                
                 new_posts.append({'id': doc_id, 'title': title, 'link': real_link})
 
         # 4. 전송 및 저장
