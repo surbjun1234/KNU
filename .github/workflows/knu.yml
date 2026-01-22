@@ -30,6 +30,7 @@ jobs:
     - name: Run Crawler
       # Secrets에 설정한 웹훅들을 파이썬으로 전달
       env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         # 1. 기본 웹훅
         WEBHOOK_GENERAL: ${{ secrets.WEBHOOK_GENERAL }}
         WEBHOOK_ACADEMIC: ${{ secrets.WEBHOOK_ACADEMIC }}
