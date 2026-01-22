@@ -3,7 +3,7 @@ name: KNU Notice Crawler
 on:
   schedule:
     # 30분마다 실행 (원하는 시간으로 변경 가능)
-    - cron: '0 * * * *'
+    - cron: '51 * * * *'
   workflow_dispatch:      # 수동 실행 버튼
 
 # ★★★ [핵심] 봇에게 파일 쓰기(저장) 권한 부여 ★★★
