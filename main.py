@@ -11,9 +11,9 @@ from urllib.parse import urljoin
 # None = 새 글이 있을 때만 전송 (파일 저장 함) -> 실사용
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": 0,    
-    "academic": 0,    
-    "electronic": 0   
+    "general": None,    
+    "academic": None,    
+    "electronic": None   
 }
 
 # -----------------------------------------------------------
@@ -45,7 +45,7 @@ BOARDS = [
         "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&fidx=",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
-        "env_key": "WEBHOOK_ELECTRONIC" # 메인 채널 (전체 알림)
+        "env_key": "WEBHOOK_ELECTRONIC" # 메인 채널
     }
 ]
 
@@ -136,7 +136,7 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
         requests.post(webhook_url, json=data)
         print(f"   🚀 [전송 성공] {title} -> (웹훅 끝자리: {webhook_url[-5:]})")
     except:
-        print(f"   ❌ [전송 실패] 웹훅 URL을 확인해주세요.")
+        print(f"   ❌ [전송 실패] 웹훅 오류")
 
 def main():
     requests.packages.urllib3.disable_warnings()
@@ -145,7 +145,6 @@ def main():
     for board in BOARDS:
         print(f"\n🔍 검사 중: {board['name']}")
         
-        # 메인 웹훅
         main_webhook_url = os.environ.get(board['env_key'])
         
         test_id = TEST_IDS.get(board['id_key'])
@@ -195,4 +194,113 @@ def main():
             # [전자공학부 태그 추출 로직]
             if board['id_key'] == 'electronic':
                 # 1. [취업] -> <취업>
-                title = re.sub(r'\[(.*?)\]', r'
+                title = re.sub(r'\[(.*?)\]', r'<\1>', title)
+                
+                # 2. 맨 앞 단어가 카테고리일 경우 < > 씌우기
+                categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s|$)"
+                title = re.sub(categories, r'<\1>', title)
+                
+                # 3. 태그 추출
+                match = re.search(r'<(.*?)>', title)
+                if match:
+                    current_tag = match.group(1)
+            
+            href = title_tag.get('href', '')
+            doc_id = 0
+            real_link = ""
+            
+            try:
+                if board['type'] == 'see_knu':
+                    match = re.search(r"no=(\d+)", href)
+                    if match:
+                        doc_id = int(match.group(1))
+                    else:
+                        nums = re.findall(r"(\d+)", href)
+                        if nums: doc_id = max([int(n) for n in nums])
+                    
+                    if doc_id > 0:
+                        real_link = f"{board['view_base']}{doc_id}"
+
+                elif board['type'] == 'knu_academic':
+                    numbers = re.findall(r"(\d+)", href)
+                    for num in numbers:
+                        if len(num) > 10: 
+                            doc_id = int(num)
+                            real_link = f"{board['view_base']}{doc_id}"
+                            break
+                else: 
+                    match = re.search(r"(\d+)", href)
+                    if match:
+                        doc_id = int(match.group(1))
+                        real_link = board['view_base'] + str(doc_id)
+
+            except Exception:
+                continue
+
+            if doc_id > 0 and doc_id > last_id:
+                if any(post['id'] == doc_id for post in new_posts):
+                    continue
+                new_posts.append({'id': doc_id, 'title': title, 'link': real_link, 'tag': current_tag})
+
+        if new_posts:
+            new_posts.sort(key=lambda x: x['id'])
+            
+            if is_test_mode:
+                new_posts = new_posts[-2:]
+                print(f"   ⚠️ [테스트] 발견된 글 중 최신 {len(new_posts)}개를 전송합니다.")
+            
+            for post in new_posts:
+                content = get_post_content(post['link'])
+                
+                # 1. 메인 웹훅 전송
+                if main_webhook_url:
+                    send_discord_message(main_webhook_url, board['name'], post['title'], post['link'], post['id'], content)
+                else:
+                    print(f"   ❌ [설정 오류] {board['env_key']} 미설정")
+
+                # 2. 전자공학부 세부 전송 로직
+                if board['id_key'] == 'electronic':
+                    tag = post['tag']
+                    specific_webhook = None
+                    env_var_name = ""
+
+                    # 디버그 로그
+                    if tag:
+                        print(f"   🔎 [태그 감지] '{tag}' -> 세부 채널 전송 시도")
+                    else:
+                        print(f"   💨 [태그 없음] '{post['title']}' -> 전체방에만 전송")
+
+                    if tag and "수업" in tag:
+                        env_var_name = "WEBHOOK_ELEC_CLASS"
+                    elif tag and "학적" in tag:
+                        env_var_name = "WEBHOOK_ELEC_RECORD"
+                    elif tag and "취업" in tag:
+                        env_var_name = "WEBHOOK_ELEC_JOB"
+                    elif tag and "장학" in tag:
+                        env_var_name = "WEBHOOK_ELEC_SCHOLARSHIP"
+                    elif tag and "행사" in tag:
+                        env_var_name = "WEBHOOK_ELEC_EVENT"
+                    elif tag and "기타" in tag:
+                        env_var_name = "WEBHOOK_ELEC_ETC"
+                    
+                    if env_var_name:
+                        specific_webhook = os.environ.get(env_var_name)
+                        if specific_webhook:
+                            send_discord_message(specific_webhook, f"{board['name']} ({tag})", post['title'], post['link'], post['id'], content)
+                        else:
+                            print(f"   ⚠️ [설정 주의] 태그 '{tag}' 감지됨, 그러나 Secrets에 '{env_var_name}' 없음")
+
+                time.sleep(1)
+
+            if not is_test_mode:
+                max_id = max(p['id'] for p in new_posts)
+                with open(os.path.join(BASE_DIR, board['file']), 'w', encoding='utf-8') as f:
+                    f.write(str(max_id))
+                print(f"   💾 ID 업데이트: {max_id}")
+            else:
+                print("   🚫 [테스트] 파일 저장 건너뜁니다.")
+        else:
+            print("   💤 새 글 없음")
+
+if __name__ == "__main__":
+    main()
