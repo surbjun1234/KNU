@@ -11,9 +11,9 @@ from urllib.parse import urljoin
 # None = 새 글이 있을 때만 전송 (파일 저장 함) -> 실사용
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": 0,    
-    "academic": 0,    
-    "electronic": 0   
+    "general": None,    
+    "academic": None,    
+    "electronic": None   
 }
 
 # -----------------------------------------------------------
@@ -42,10 +42,10 @@ BOARDS = [
         "id_key": "electronic",
         "name": "⚡ 전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
-        "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&gtid=notice&opt=&sword=&page=1&f_opt_1=&fidx=",
+        "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&fidx=",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
-        "env_key": "WEBHOOK_ELECTRONIC"
+        "env_key": "WEBHOOK_ELECTRONIC" # 전자공학부 전체방 (필수)
     }
 ]
 
@@ -61,20 +61,14 @@ COMMON_HEADERS = {
     'Upgrade-Insecure-Requests': '1'
 }
 
-# -----------------------------------------------------------
-# [텍스트 정리 함수] - 전자공학부 본문용
-# -----------------------------------------------------------
 def clean_electronic_text(text):
-    text = re.sub(r'\s+', ' ', text) # 줄바꿈을 공백으로 변경
+    text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'\s+\.\s+', '. ', text)
     text = re.sub(r'\(\s+', '(', text)
     text = re.sub(r'\s+\)', ')', text)
-    
-    # 가., 1), ※ 등의 불릿 포인트 앞에서 줄바꿈
     text = re.sub(r'(?<!^)(\s)([가-하]\.)', r'\n\n\2', text)
     text = re.sub(r'(?<!^)(\s)(\d+\))', r'\n\2', text)
     text = re.sub(r'(?<!^)(\s)([※-□o·])', r'\n\2', text)
-    
     return text.strip()
 
 def get_post_content(url):
@@ -122,6 +116,8 @@ def get_post_content(url):
         return f"본문 로딩 실패: {e}"
 
 def send_discord_message(webhook_url, board_name, title, link, doc_id, original_content):
+    if not webhook_url: return
+
     clean = original_content[:500] + ("..." if len(original_content) > 500 else "")
     if not clean.strip():
         clean = "(본문 없음 혹은 이미지)"
@@ -138,9 +134,9 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
     }
     try:
         requests.post(webhook_url, json=data)
-        print(f"🚀 [전송 성공] {title}")
+        print(f"   🚀 [전송 성공] {title} -> {webhook_url[-5:]}...")
     except:
-        pass
+        print(f"   ❌ [전송 실패] 웹훅 오류")
 
 def main():
     requests.packages.urllib3.disable_warnings()
@@ -149,11 +145,9 @@ def main():
     for board in BOARDS:
         print(f"\n🔍 검사 중: {board['name']}")
         
-        webhook_url = os.environ.get(board['env_key'])
-        if not webhook_url:
-            print(f"   🚨 웹훅 미설정. 건너뜀.")
-            continue
-
+        # 1. 메인 웹훅 설정
+        main_webhook_url = os.environ.get(board['env_key'])
+        
         test_id = TEST_IDS.get(board['id_key'])
         is_test_mode = test_id is not None
         
@@ -192,21 +186,21 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
-            # ★ [제목 정리 로직]
-            # 공통: HTML 텍스트의 불필요한 공백/줄바꿈 압축
+            # 제목 및 태그 처리
             raw_title = title_tag.get_text(separator=" ", strip=True)
             title = " ".join(raw_title.split())
             
-            # ★ [수정됨] 전자공학부만 [ ] -> < > 변환 및 카테고리 자동 생성 적용
+            current_tag = None
+            
             if board['id_key'] == 'electronic':
-                # 대괄호가 있는 경우: [취업] -> <취업>
                 title = re.sub(r'\[(.*?)\]', r'<\1>', title)
-                
-                # 대괄호가 없는 경우: 맨 앞 단어가 카테고리면 <> 씌워주기
                 categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s)"
                 title = re.sub(categories, r'<\1>', title)
-            
-            # (전체공지, 학사공지는 원본의 [] 대괄호를 그대로 유지합니다)
+                
+                # 태그 추출 (< > 안의 내용)
+                match = re.search(r'<(.*?)>', title)
+                if match:
+                    current_tag = match.group(1)
 
             href = title_tag.get('href', '')
             doc_id = 0
@@ -231,7 +225,6 @@ def main():
                             doc_id = int(num)
                             real_link = f"{board['view_base']}{doc_id}"
                             break
-
                 else: 
                     match = re.search(r"(\d+)", href)
                     if match:
@@ -244,7 +237,7 @@ def main():
             if doc_id > 0 and doc_id > last_id:
                 if any(post['id'] == doc_id for post in new_posts):
                     continue
-                new_posts.append({'id': doc_id, 'title': title, 'link': real_link})
+                new_posts.append({'id': doc_id, 'title': title, 'link': real_link, 'tag': current_tag})
 
         if new_posts:
             new_posts.sort(key=lambda x: x['id'])
@@ -255,7 +248,34 @@ def main():
             
             for post in new_posts:
                 content = get_post_content(post['link'])
-                send_discord_message(webhook_url, board['name'], post['title'], post['link'], post['id'], content)
+                
+                # 1. 메인 웹훅 전송 (모든 글)
+                if main_webhook_url:
+                    send_discord_message(main_webhook_url, board['name'], post['title'], post['link'], post['id'], content)
+
+                # 2. ★ 전자공학부 전용: 세부 카테고리 전송 (else 삭제됨)
+                if board['id_key'] == 'electronic' and post['tag']:
+                    specific_webhook = None
+                    tag = post['tag']
+                    
+                    if "수업" in tag:
+                        specific_webhook = os.environ.get("WEBHOOK_ELEC_CLASS")
+                    elif "학적" in tag:
+                        specific_webhook = os.environ.get("WEBHOOK_ELEC_RECORD")
+                    elif "취업" in tag:
+                        specific_webhook = os.environ.get("WEBHOOK_ELEC_JOB")
+                    elif "장학" in tag:
+                        specific_webhook = os.environ.get("WEBHOOK_ELEC_SCHOLARSHIP")
+                    elif "행사" in tag:
+                        specific_webhook = os.environ.get("WEBHOOK_ELEC_EVENT")
+                    elif "기타" in tag: # 명시적으로 '기타'인 경우만 전송
+                        specific_webhook = os.environ.get("WEBHOOK_ELEC_ETC")
+                    
+                    # 해당하는 웹훅이 있을 때만 보냄 (나머지 처리 안 함)
+                    if specific_webhook:
+                        print(f"   ↪ [추가 전송] 태그 <{tag}> 감지 -> 세부 채널로 전송")
+                        send_discord_message(specific_webhook, f"{board['name']} ({tag})", post['title'], post['link'], post['id'], content)
+
                 time.sleep(1)
 
             if not is_test_mode:
