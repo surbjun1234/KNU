@@ -45,7 +45,7 @@ BOARDS = [
         "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&fidx=",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
-        "env_key": "WEBHOOK_ELECTRONIC" # 전자공학부 전체방 (필수)
+        "env_key": "WEBHOOK_ELECTRONIC" # 메인 채널 (전체 알림)
     }
 ]
 
@@ -134,9 +134,9 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
     }
     try:
         requests.post(webhook_url, json=data)
-        print(f"   🚀 [전송 성공] {title} -> {webhook_url[-5:]}...")
+        print(f"   🚀 [전송 성공] {title} -> (웹훅 끝자리: {webhook_url[-5:]})")
     except:
-        print(f"   ❌ [전송 실패] 웹훅 오류")
+        print(f"   ❌ [전송 실패] 웹훅 URL을 확인해주세요.")
 
 def main():
     requests.packages.urllib3.disable_warnings()
@@ -145,7 +145,7 @@ def main():
     for board in BOARDS:
         print(f"\n🔍 검사 중: {board['name']}")
         
-        # 1. 메인 웹훅 설정
+        # 메인 웹훅
         main_webhook_url = os.environ.get(board['env_key'])
         
         test_id = TEST_IDS.get(board['id_key'])
@@ -186,107 +186,13 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
-            # 제목 및 태그 처리
+            # 제목 정리
             raw_title = title_tag.get_text(separator=" ", strip=True)
             title = " ".join(raw_title.split())
             
             current_tag = None
             
+            # [전자공학부 태그 추출 로직]
             if board['id_key'] == 'electronic':
-                title = re.sub(r'\[(.*?)\]', r'<\1>', title)
-                categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s)"
-                title = re.sub(categories, r'<\1>', title)
-                
-                # 태그 추출 (< > 안의 내용)
-                match = re.search(r'<(.*?)>', title)
-                if match:
-                    current_tag = match.group(1)
-
-            href = title_tag.get('href', '')
-            doc_id = 0
-            real_link = ""
-            
-            try:
-                if board['type'] == 'see_knu':
-                    match = re.search(r"no=(\d+)", href)
-                    if match:
-                        doc_id = int(match.group(1))
-                    else:
-                        nums = re.findall(r"(\d+)", href)
-                        if nums: doc_id = max([int(n) for n in nums])
-                    
-                    if doc_id > 0:
-                        real_link = f"{board['view_base']}{doc_id}"
-
-                elif board['type'] == 'knu_academic':
-                    numbers = re.findall(r"(\d+)", href)
-                    for num in numbers:
-                        if len(num) > 10: 
-                            doc_id = int(num)
-                            real_link = f"{board['view_base']}{doc_id}"
-                            break
-                else: 
-                    match = re.search(r"(\d+)", href)
-                    if match:
-                        doc_id = int(match.group(1))
-                        real_link = board['view_base'] + str(doc_id)
-
-            except Exception:
-                continue
-
-            if doc_id > 0 and doc_id > last_id:
-                if any(post['id'] == doc_id for post in new_posts):
-                    continue
-                new_posts.append({'id': doc_id, 'title': title, 'link': real_link, 'tag': current_tag})
-
-        if new_posts:
-            new_posts.sort(key=lambda x: x['id'])
-            
-            if is_test_mode:
-                new_posts = new_posts[-2:]
-                print(f"   ⚠️ [테스트] 발견된 글 중 최신 {len(new_posts)}개를 전송합니다.")
-            
-            for post in new_posts:
-                content = get_post_content(post['link'])
-                
-                # 1. 메인 웹훅 전송 (모든 글)
-                if main_webhook_url:
-                    send_discord_message(main_webhook_url, board['name'], post['title'], post['link'], post['id'], content)
-
-                # 2. ★ 전자공학부 전용: 세부 카테고리 전송 (else 삭제됨)
-                if board['id_key'] == 'electronic' and post['tag']:
-                    specific_webhook = None
-                    tag = post['tag']
-                    
-                    if "수업" in tag:
-                        specific_webhook = os.environ.get("WEBHOOK_ELEC_CLASS")
-                    elif "학적" in tag:
-                        specific_webhook = os.environ.get("WEBHOOK_ELEC_RECORD")
-                    elif "취업" in tag:
-                        specific_webhook = os.environ.get("WEBHOOK_ELEC_JOB")
-                    elif "장학" in tag:
-                        specific_webhook = os.environ.get("WEBHOOK_ELEC_SCHOLARSHIP")
-                    elif "행사" in tag:
-                        specific_webhook = os.environ.get("WEBHOOK_ELEC_EVENT")
-                    elif "기타" in tag: # 명시적으로 '기타'인 경우만 전송
-                        specific_webhook = os.environ.get("WEBHOOK_ELEC_ETC")
-                    
-                    # 해당하는 웹훅이 있을 때만 보냄 (나머지 처리 안 함)
-                    if specific_webhook:
-                        print(f"   ↪ [추가 전송] 태그 <{tag}> 감지 -> 세부 채널로 전송")
-                        send_discord_message(specific_webhook, f"{board['name']} ({tag})", post['title'], post['link'], post['id'], content)
-
-                time.sleep(1)
-
-            if not is_test_mode:
-                max_id = max(p['id'] for p in new_posts)
-                with open(os.path.join(BASE_DIR, board['file']), 'w', encoding='utf-8') as f:
-                    f.write(str(max_id))
-                print(f"   💾 ID 업데이트: {max_id}")
-            else:
-                print("   🚫 [테스트] 파일 저장 건너뜁니다.")
-        else:
-            print("   💤 새 글 없음")
-
-if __name__ == "__main__":
-    main()
+                # 1. [취업] -> <취업>
+                title = re.sub(r'\[(.*?)\]', r'
