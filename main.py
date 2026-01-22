@@ -56,9 +56,10 @@ def summarize_content(content):
     
     if len(content) < 100: return content
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite-preview-02-05:generateContent?key={GEMINI_API_KEY}"
+    # Gemini 2.5 Flash-Lite 모델 적용 URL
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
-    prompt = f"아래 대학교 공지사항 본문을 학생들이 보기 편하게 핵심만 3줄 이내 번호 리스트로 요약해줘. 날짜와 장소는 반드시 포함해:\n\n{content[:3000]}"
+    prompt = f"아래 대학교 공지사항 본문을 학생들이 보기 편하게 핵심만 4줄 이내 번호 리스트로 요약해줘. 날짜와 장소는 반드시 포함해:\n\n{content[:3000]}"
     
     data = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 600, "temperature": 0.2}}
 
@@ -67,7 +68,7 @@ def summarize_content(content):
         res_json = response.json()
         return res_json['candidates'][0]['content']['parts'][0]['text'].strip()
     except:
-        return f"✨ 요약 생성 실패 (미리보기):\n{content[:300]}..."
+        return f"❗ 요약 생성 실패 (미리보기):\n{content[:300]}..."
 
 # -----------------------------------------------------------
 # [본문 추출 및 정리]
@@ -100,7 +101,7 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, summary):
         "content": f"🔔 **{board_name} 업데이트**",
         "embeds": [{
             "title": title,
-            "description": f"✨ **AI 핵심 요약**\n{summary}",
+            "description": f"✨ **Gemini 요약**\n{summary}",
             "url": link,
             "color": 3447003,
             "footer": {"text": f"ID: {doc_id}"}
