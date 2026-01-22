@@ -192,18 +192,21 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
-            # ★ [제목 정리 로직 강화]
-            # 1. HTML 텍스트 가져와서 모든 공백/줄바꿈을 스페이스 하나로 압축
+            # ★ [제목 정리 로직]
+            # 공통: HTML 텍스트의 불필요한 공백/줄바꿈 압축
             raw_title = title_tag.get_text(separator=" ", strip=True)
             title = " ".join(raw_title.split())
             
-            # 2. 대괄호가 있는 경우: [취업] -> <취업>
-            title = re.sub(r'\[(.*?)\]', r'<\1>', title)
+            # ★ [수정됨] 전자공학부만 [ ] -> < > 변환 및 카테고리 자동 생성 적용
+            if board['id_key'] == 'electronic':
+                # 대괄호가 있는 경우: [취업] -> <취업>
+                title = re.sub(r'\[(.*?)\]', r'<\1>', title)
+                
+                # 대괄호가 없는 경우: 맨 앞 단어가 카테고리면 <> 씌워주기
+                categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s)"
+                title = re.sub(categories, r'<\1>', title)
             
-            # 3. 대괄호가 없는 경우: 맨 앞 단어가 카테고리면 <> 씌워주기
-            # (취업, 장학, 학적, 수업, 일반, 행사, 공지, 국제, 졸업)
-            categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s)"
-            title = re.sub(categories, r'<\1>', title)
+            # (전체공지, 학사공지는 원본의 [] 대괄호를 그대로 유지합니다)
 
             href = title_tag.get('href', '')
             doc_id = 0
