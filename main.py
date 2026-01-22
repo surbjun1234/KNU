@@ -11,9 +11,9 @@ from urllib.parse import urljoin
 # None = 새 글이 있을 때만 전송 (파일 저장 함) -> 실사용
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": 0,    
-    "academic": 0,    
-    "electronic": 0  
+    "general": None,    
+    "academic": None,    
+    "electronic": None   
 }
 
 # -----------------------------------------------------------
@@ -42,8 +42,7 @@ BOARDS = [
         "id_key": "electronic",
         "name": "⚡ 전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
-        # ★ 수정됨: 요청하신 깔끔한 주소 포맷 (pg=vv&fidx=)
-        "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&fidx=",
+        "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&gtid=notice&opt=&sword=&page=1&f_opt_1=&fidx=",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
         "env_key": "WEBHOOK_ELECTRONIC"
@@ -62,6 +61,32 @@ COMMON_HEADERS = {
     'Upgrade-Insecure-Requests': '1'
 }
 
+# -----------------------------------------------------------
+# [텍스트 정리 함수] - 전자공학부 전용
+# -----------------------------------------------------------
+def clean_electronic_text(text):
+    # 1. 쪼개진 글자들을 스페이스 하나로 일단 합침 (줄바꿈 제거)
+    # 예: "가\n. (" -> "가 . ("
+    text = re.sub(r'\s+', ' ', text)
+    
+    # 2. 기호 주변의 불필요한 공백 제거
+    # " . " -> ". " / "( " -> "(" / " )" -> ")"
+    text = re.sub(r'\s+\.\s+', '. ', text)
+    text = re.sub(r'\(\s+', '(', text)
+    text = re.sub(r'\s+\)', ')', text)
+    
+    # 3. 문서 구조 복원 (중요 포인트에서 엔터 삽입)
+    # 가., 나. 등 한글 불릿 포인트 앞
+    text = re.sub(r'(?<!^)(\s)([가-하]\.)', r'\n\n\2', text)
+    # 1), 2) 등 숫자 괄호 앞
+    text = re.sub(r'(?<!^)(\s)(\d+\))', r'\n\2', text)
+    # ※, -, □, o, · 등 특수기호 불릿 앞
+    text = re.sub(r'(?<!^)(\s)([※-□o·])', r'\n\2', text)
+    
+    # 4. 날짜(2025. 1. 1.)는 엔터 치면 안 됨 (위 로직이 날짜는 안 건드림)
+    
+    return text.strip()
+
 def get_post_content(url):
     try:
         requests.packages.urllib3.disable_warnings()
@@ -77,15 +102,12 @@ def get_post_content(url):
         soup = BeautifulSoup(response.text, 'html.parser')
 
         content_div = None
-
-        # 1. 본문 찾기
         candidates = ['.contentview', '#contentview', '.board_cont', '.board-view', '.view_con', '.content', '.tbl_view']
         
         for selector in candidates:
             content_div = soup.select_one(selector)
             if content_div: break
         
-        # 2. 못 찾았을 경우: 글자 수가 가장 많은 구역 자동 탐색
         if not content_div:
             potential_areas = []
             for tag in soup.find_all(['div', 'td']):
@@ -98,11 +120,16 @@ def get_post_content(url):
                 content_div = potential_areas[0][1]
 
         if content_div:
-            raw_text = content_div.get_text(separator="\n")
-            # 공백 청소
-            cleaned_lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-            text = '\n'.join(cleaned_lines)
-            return text
+            # ★ 전자공학부일 경우: 줄바꿈 없이 가져온 뒤 재조립
+            if "see.knu.ac.kr" in url:
+                raw_text = content_div.get_text(separator=" ") # 공백으로 합침
+                return clean_electronic_text(raw_text)
+            
+            # ★ 일반 공지일 경우: 기존 방식 유지 (줄바꿈 유지)
+            else:
+                raw_text = content_div.get_text(separator="\n")
+                cleaned_lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+                return '\n'.join(cleaned_lines)
             
         return "본문 내용을 찾을 수 없습니다."
     except Exception as e:
@@ -181,7 +208,7 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
-            # 제목 정리: [학적] -> <학적>
+            # 제목 정리
             title = title_tag.text.strip()
             title = re.sub(r'\[(.*?)\]', r'<\1>', title)
 
@@ -200,7 +227,6 @@ def main():
                         if nums: doc_id = max([int(n) for n in nums])
                     
                     if doc_id > 0:
-                        # ★ [링크 수정] 깔끔한 주소 + ID
                         real_link = f"{board['view_base']}{doc_id}"
 
                 # B. 학사공지
