@@ -11,9 +11,9 @@ from urllib.parse import urljoin
 # None = 새 글이 있을 때만 전송 (파일 저장 함) -> 실사용
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": 0,    
-    "academic": 0,    
-    "electronic": 0   
+    "general": None,    
+    "academic": None,    
+    "electronic": None   
 }
 
 # -----------------------------------------------------------
@@ -115,18 +115,37 @@ def get_post_content(url):
     except Exception as e:
         return f"본문 로딩 실패: {e}"
 
+# gemini-2.5-flash-lite 모델을 이용한 요약 함수 (API 키 필요)
+def get_gemini_summary(text):
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return text[:300] + "..." # API 키가 없으면 기존 방식 유지
+    
+    try:
+        # gemini-2.5-flash-lite 모델 API 호출 구조 (가상)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={api_key}"
+        payload = {
+            "contents": [{
+                "parts": [{"text": f"다음 공지사항 내용을 3문장 이내로 제목 제외하고 핵심만 요약해줘:\n\n{text}"}]
+            }]
+        }
+        res = requests.post(url, json=payload, timeout=10)
+        summary = res.json()['candidates'][0]['content']['parts'][0]['text']
+        return summary.strip()
+    except:
+        return text[:300] + "..."
+
 def send_discord_message(webhook_url, board_name, title, link, doc_id, original_content):
     if not webhook_url: return
 
-    clean = original_content[:500] + ("..." if len(original_content) > 500 else "")
-    if not clean.strip():
-        clean = "(본문 없음 혹은 이미지)"
+    # gemini-2.5-flash-lite 모델을 통한 요약 적용
+    summary_text = get_gemini_summary(original_content)
 
     data = {
         "content": f"🔔 **{board_name} 업데이트**",
         "embeds": [{
             "title": title,
-            "description": f"**[본문 미리보기]**\n{clean}",
+            "description": f"✨ Gemini 요약\n{summary_text}",
             "url": link,
             "color": 3447003,
             "footer": {"text": f"{board_name} • ID: {doc_id}"}
@@ -134,9 +153,9 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
     }
     try:
         requests.post(webhook_url, json=data)
-        print(f"   🚀 [전송 성공] {title} -> (웹훅 끝자리: {webhook_url[-5:]})")
+        print(f"    🚀 [전송 성공] {title} -> (웹훅 끝자리: {webhook_url[-5:]})")
     except:
-        print(f"   ❌ [전송 실패] 웹훅 오류")
+        print(f"    ❌ [전송 실패] 웹훅 오류")
 
 def main():
     requests.packages.urllib3.disable_warnings()
@@ -152,7 +171,7 @@ def main():
         
         if is_test_mode:
             last_id = 0
-            print(f"   ⚠️ [테스트 모드] 최근 게시글 2개를 강제 전송합니다.")
+            print(f"    ⚠️ [테스트 모드] 최근 게시글 2개를 강제 전송합니다.")
         else:
             file_path = os.path.join(BASE_DIR, board['file'])
             try:
@@ -161,7 +180,7 @@ def main():
                     last_id = int(content) if content else 0
             except FileNotFoundError:
                 last_id = 0
-            print(f"   📂 저장된 ID: {last_id}")
+            print(f"    📂 저장된 ID: {last_id}")
 
         try:
             headers = COMMON_HEADERS.copy()
@@ -170,7 +189,7 @@ def main():
             response.encoding = 'UTF-8'
             soup = BeautifulSoup(response.text, 'html.parser')
         except Exception as e:
-            print(f"   🚨 접속 실패: {e}")
+            print(f"    🚨 접속 실패: {e}")
             continue
 
         rows = soup.select("tbody > tr")
@@ -247,7 +266,7 @@ def main():
             
             if is_test_mode:
                 new_posts = new_posts[-2:]
-                print(f"   ⚠️ [테스트] 발견된 글 중 최신 {len(new_posts)}개를 전송합니다.")
+                print(f"    ⚠️ [테스트] 발견된 글 중 최신 {len(new_posts)}개를 전송합니다.")
             
             for post in new_posts:
                 content = get_post_content(post['link'])
@@ -256,7 +275,7 @@ def main():
                 if main_webhook_url:
                     send_discord_message(main_webhook_url, board['name'], post['title'], post['link'], post['id'], content)
                 else:
-                    print(f"   ❌ [설정 오류] {board['env_key']} 미설정")
+                    print(f"    ❌ [설정 오류] {board['env_key']} 미설정")
 
                 # 2. 전자공학부 세부 전송 로직
                 if board['id_key'] == 'electronic':
@@ -266,9 +285,9 @@ def main():
 
                     # 디버그 로그
                     if tag:
-                        print(f"   🔎 [태그 감지] '{tag}' -> 세부 채널 전송 시도")
+                        print(f"    🔎 [태그 감지] '{tag}' -> 세부 채널 전송 시도")
                     else:
-                        print(f"   💨 [태그 없음] '{post['title']}' -> 전체방에만 전송")
+                        print(f"    💨 [태그 없음] '{post['title']}' -> 전체방에만 전송")
 
                     if tag and "수업" in tag:
                         env_var_name = "WEBHOOK_ELEC_CLASS"
@@ -288,7 +307,7 @@ def main():
                         if specific_webhook:
                             send_discord_message(specific_webhook, f"{board['name']} ({tag})", post['title'], post['link'], post['id'], content)
                         else:
-                            print(f"   ⚠️ [설정 주의] 태그 '{tag}' 감지됨, 그러나 Secrets에 '{env_var_name}' 없음")
+                            print(f"    ⚠️ [설정 주의] 태그 '{tag}' 감지됨, 그러나 Secrets에 '{env_var_name}' 없음")
 
                 time.sleep(1)
 
@@ -296,11 +315,11 @@ def main():
                 max_id = max(p['id'] for p in new_posts)
                 with open(os.path.join(BASE_DIR, board['file']), 'w', encoding='utf-8') as f:
                     f.write(str(max_id))
-                print(f"   💾 ID 업데이트: {max_id}")
+                print(f"    💾 ID 업데이트: {max_id}")
             else:
-                print("   🚫 [테스트] 파일 저장 건너뜁니다.")
+                print("    🚫 [테스트] 파일 저장 건너뜁니다.")
         else:
-            print("   💤 새 글 없음")
+            print("    💤 새 글 없음")
 
 if __name__ == "__main__":
     main()
