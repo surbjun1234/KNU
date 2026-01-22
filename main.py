@@ -11,9 +11,9 @@ from urllib.parse import urljoin
 # None = 새 글이 있을 때만 전송 (파일 저장 함) -> 실사용
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": None,    
-    "academic": None,    
-    "electronic": None   
+    "general": 0,    
+    "academic": 0,    
+    "electronic": 0   
 }
 
 # -----------------------------------------------------------
