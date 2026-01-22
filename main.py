@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import os
 import re
 import time
+from urllib.parse import urljoin # URL 합치기용 도구 추가
 
 # -----------------------------------------------------------
 # [테스트 모드]
@@ -31,7 +32,8 @@ BOARDS = [
         "id_key": "academic",
         "name": "🎓 학사공지",
         "url": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42",
-        "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdViewBtin.action?menu_idx=42&bbs_cde=stu_812&note_div=row&bltn_no=",
+        # ★ 수정됨: 제보해주신 URL 파라미터를 빠짐없이 모두 포함 (순서 중요)
+        "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdViewBtin.action?search_type=&search_text=&popupDeco=&note_div=row&menu_idx=42&bbs_cde=stu_812&bltn_no=",
         "file": "latest_id_academic.txt",
         "type": "knu_academic",
         "env_key": "WEBHOOK_ACADEMIC"
@@ -40,7 +42,8 @@ BOARDS = [
         "id_key": "electronic",
         "name": "⚡ 전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
-        "view_base": "https://see.knu.ac.kr/content/board/notice.html?f=view&no=",
+        # 전자공학부는 view_base 대신 크롤링한 href를 직접 붙여서 씁니다.
+        "view_base": "https://see.knu.ac.kr/content/board/notice.html",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
         "env_key": "WEBHOOK_ELECTRONIC"
@@ -73,7 +76,7 @@ def get_post_content(url):
         response.encoding = 'UTF-8'
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # ★ 수정됨: .contentview (전자공학부) 최우선 적용
+        # ★ 수정됨: .contentview (전자), .board_cont (학사) 최우선 적용
         candidates = ['.contentview', '.board_cont', '.board-view', '.view_con', '.content', '.tbl_view']
         
         content_div = None
@@ -82,9 +85,10 @@ def get_post_content(url):
             if content_div: break
         
         if not content_div:
+            # 테이블 td 중에서 내용이 긴 것 찾기
             tds = soup.select("td")
             for td in tds:
-                if len(td.get_text(strip=True)) > 100: 
+                if len(td.get_text(strip=True)) > 200: # 기준을 200자로 상향
                     content_div = td
                     break
 
@@ -164,10 +168,8 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
+            # ★ 제목 정리: [학적] -> <학적>
             title = title_tag.text.strip()
-            
-            # ★ 제목 수정 로직: [학적] -> <학적>
-            # 대괄호([]) 안에 있는 모든 문자를 꺾쇠(<>)로 바꿈
             title = re.sub(r'\[(.*?)\]', r'<\1>', title)
 
             href = title_tag.get('href', '')
@@ -175,27 +177,36 @@ def main():
             real_link = ""
             
             try:
+                # A. 전자공학부: href 그대로 사용 (목록 튕김 방지)
                 if board['type'] == 'see_knu':
                     # 1순위: no=숫자
                     match = re.search(r"no=(\d+)", href)
                     if match:
                         doc_id = int(match.group(1))
                     else:
-                        # 2순위: 링크 내 마지막 숫자
                         nums = re.findall(r"(\d+)", href)
                         if nums: doc_id = int(nums[-1])
                     
                     if doc_id > 0:
-                        real_link = board['view_base'] + str(doc_id)
+                        # ★ 수정됨: 주소 조립 대신 href를 그대로 붙임
+                        # 예: ?f=view&no=1234 -> https://see.knu.ac.kr/content/board/notice.html?f=view&no=1234
+                        if href.startswith('?'):
+                            real_link = board['view_base'] + href
+                        else:
+                             # 만약 href가 전체 주소거나 다른 형식이면 urljoin 사용
+                            real_link = urljoin(board['view_base'], href)
 
+                # B. 학사공지: bltn_no 사용 + 전체 파라미터 적용
                 elif board['type'] == 'knu_academic':
                     numbers = re.findall(r"(\d+)", href)
                     for num in numbers:
                         if len(num) > 10: 
                             doc_id = int(num)
+                            # ★ 수정됨: 제보된 파라미터 구조 사용
                             real_link = f"{board['view_base']}{doc_id}"
                             break
 
+                # C. 전체공지: doc_no
                 else: 
                     match = re.search(r"(\d+)", href)
                     if match:
