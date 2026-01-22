@@ -59,7 +59,7 @@ def summarize_content(content):
     # Gemini 2.5 Flash-Lite 모델 적용 URL
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
-    prompt = f"아래 대학교 공지사항 본문을 학생들이 보기 편하게 핵심만 4줄 이내 번호 리스트로 요약해줘. 날짜와 장소는 반드시 포함해:\n\n{content[:3000]}"
+    prompt = f"아래 대학교 공지사항 본문을 학생들이 보기 편하게 제목은 뺴고 핵심만 4줄 이내 번호 리스트로 요약해줘. 날짜와 장소는 반드시 포함해:\n\n{content[:3000]}"
     
     data = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 600, "temperature": 0.2}}
 
