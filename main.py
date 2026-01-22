@@ -62,28 +62,18 @@ COMMON_HEADERS = {
 }
 
 # -----------------------------------------------------------
-# [텍스트 정리 함수] - 전자공학부 전용
+# [텍스트 정리 함수] - 전자공학부 본문용
 # -----------------------------------------------------------
 def clean_electronic_text(text):
-    # 1. 쪼개진 글자들을 스페이스 하나로 일단 합침 (줄바꿈 제거)
-    # 예: "가\n. (" -> "가 . ("
-    text = re.sub(r'\s+', ' ', text)
-    
-    # 2. 기호 주변의 불필요한 공백 제거
-    # " . " -> ". " / "( " -> "(" / " )" -> ")"
+    text = re.sub(r'\s+', ' ', text) # 줄바꿈을 공백으로 변경
     text = re.sub(r'\s+\.\s+', '. ', text)
     text = re.sub(r'\(\s+', '(', text)
     text = re.sub(r'\s+\)', ')', text)
     
-    # 3. 문서 구조 복원 (중요 포인트에서 엔터 삽입)
-    # 가., 나. 등 한글 불릿 포인트 앞
+    # 가., 1), ※ 등의 불릿 포인트 앞에서 줄바꿈
     text = re.sub(r'(?<!^)(\s)([가-하]\.)', r'\n\n\2', text)
-    # 1), 2) 등 숫자 괄호 앞
     text = re.sub(r'(?<!^)(\s)(\d+\))', r'\n\2', text)
-    # ※, -, □, o, · 등 특수기호 불릿 앞
     text = re.sub(r'(?<!^)(\s)([※-□o·])', r'\n\2', text)
-    
-    # 4. 날짜(2025. 1. 1.)는 엔터 치면 안 됨 (위 로직이 날짜는 안 건드림)
     
     return text.strip()
 
@@ -114,18 +104,14 @@ def get_post_content(url):
                 text_len = len(tag.get_text(strip=True))
                 if text_len > 50: 
                     potential_areas.append((text_len, tag))
-            
             if potential_areas:
                 potential_areas.sort(key=lambda x: x[0], reverse=True)
                 content_div = potential_areas[0][1]
 
         if content_div:
-            # ★ 전자공학부일 경우: 줄바꿈 없이 가져온 뒤 재조립
             if "see.knu.ac.kr" in url:
-                raw_text = content_div.get_text(separator=" ") # 공백으로 합침
+                raw_text = content_div.get_text(separator=" ")
                 return clean_electronic_text(raw_text)
-            
-            # ★ 일반 공지일 경우: 기존 방식 유지 (줄바꿈 유지)
             else:
                 raw_text = content_div.get_text(separator="\n")
                 cleaned_lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
@@ -168,7 +154,6 @@ def main():
             print(f"   🚨 웹훅 미설정. 건너뜀.")
             continue
 
-        # 1. ID 로드 & 테스트 모드
         test_id = TEST_IDS.get(board['id_key'])
         is_test_mode = test_id is not None
         
@@ -185,7 +170,6 @@ def main():
                 last_id = 0
             print(f"   📂 저장된 ID: {last_id}")
 
-        # 2. 접속
         try:
             headers = COMMON_HEADERS.copy()
             headers['Referer'] = board['url']
@@ -208,16 +192,24 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
-            # 제목 정리
-            title = title_tag.text.strip()
+            # ★ [제목 정리 로직 강화]
+            # 1. HTML 텍스트 가져와서 모든 공백/줄바꿈을 스페이스 하나로 압축
+            raw_title = title_tag.get_text(separator=" ", strip=True)
+            title = " ".join(raw_title.split())
+            
+            # 2. 대괄호가 있는 경우: [취업] -> <취업>
             title = re.sub(r'\[(.*?)\]', r'<\1>', title)
+            
+            # 3. 대괄호가 없는 경우: 맨 앞 단어가 카테고리면 <> 씌워주기
+            # (취업, 장학, 학적, 수업, 일반, 행사, 공지, 국제, 졸업)
+            categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s)"
+            title = re.sub(categories, r'<\1>', title)
 
             href = title_tag.get('href', '')
             doc_id = 0
             real_link = ""
             
             try:
-                # A. 전자공학부
                 if board['type'] == 'see_knu':
                     match = re.search(r"no=(\d+)", href)
                     if match:
@@ -229,7 +221,6 @@ def main():
                     if doc_id > 0:
                         real_link = f"{board['view_base']}{doc_id}"
 
-                # B. 학사공지
                 elif board['type'] == 'knu_academic':
                     numbers = re.findall(r"(\d+)", href)
                     for num in numbers:
@@ -238,7 +229,6 @@ def main():
                             real_link = f"{board['view_base']}{doc_id}"
                             break
 
-                # C. 전체공지
                 else: 
                     match = re.search(r"(\d+)", href)
                     if match:
@@ -248,13 +238,11 @@ def main():
             except Exception:
                 continue
 
-            # 3. 새 글 판단 & 중복 방지
             if doc_id > 0 and doc_id > last_id:
                 if any(post['id'] == doc_id for post in new_posts):
                     continue
                 new_posts.append({'id': doc_id, 'title': title, 'link': real_link})
 
-        # 4. 전송 및 저장
         if new_posts:
             new_posts.sort(key=lambda x: x['id'])
             
