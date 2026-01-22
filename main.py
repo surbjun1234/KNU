@@ -9,9 +9,9 @@ from urllib.parse import urljoin
 # [설정] 0 = 테스트용(무조건 전송) / None = 실사용(새 글만 전송)
 # -----------------------------------------------------------
 TEST_IDS = {
-    "general": None,    
-    "academic": None,    
-    "electronic": None   
+    "general": 0,    
+    "academic": 0,    
+    "electronic": 0   
 }
 
 BOARDS = [
