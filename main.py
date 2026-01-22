@@ -126,7 +126,7 @@ def get_gemini_summary(text):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={api_key}"
         payload = {
             "contents": [{
-                "parts": [{"text": f"다음 공지사항 내용을 제목은 제외하고 요지 딱 두문장으로 요약해줘:\n\n{text}"}]
+                "parts": [{"text": f"다음 공지사항 내용을 제목은 제외하고 요지 딱 두문장으로 요약해줘.요약할때 문장마다 1.2.이렇게 번호를 붙이고 마지막은 ~함 이런식으로 명사화 해서 표현해:\n\n{text}"}]
             }]
         }
         res = requests.post(url, json=payload, timeout=10)
