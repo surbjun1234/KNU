@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import os
 import re
 import time
-from urllib.parse import urljoin # URL 합치기용 도구 추가
+from urllib.parse import urljoin
 
 # -----------------------------------------------------------
 # [테스트 모드]
@@ -32,7 +32,6 @@ BOARDS = [
         "id_key": "academic",
         "name": "🎓 학사공지",
         "url": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42",
-        # ★ 수정됨: 제보해주신 URL 파라미터를 빠짐없이 모두 포함 (순서 중요)
         "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdViewBtin.action?search_type=&search_text=&popupDeco=&note_div=row&menu_idx=42&bbs_cde=stu_812&bltn_no=",
         "file": "latest_id_academic.txt",
         "type": "knu_academic",
@@ -42,7 +41,6 @@ BOARDS = [
         "id_key": "electronic",
         "name": "⚡ 전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
-        # 전자공학부는 view_base 대신 크롤링한 href를 직접 붙여서 씁니다.
         "view_base": "https://see.knu.ac.kr/content/board/notice.html",
         "file": "latest_id_electronic.txt",
         "type": "see_knu",
@@ -76,7 +74,6 @@ def get_post_content(url):
         response.encoding = 'UTF-8'
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # ★ 수정됨: .contentview (전자), .board_cont (학사) 최우선 적용
         candidates = ['.contentview', '.board_cont', '.board-view', '.view_con', '.content', '.tbl_view']
         
         content_div = None
@@ -85,10 +82,9 @@ def get_post_content(url):
             if content_div: break
         
         if not content_div:
-            # 테이블 td 중에서 내용이 긴 것 찾기
             tds = soup.select("td")
             for td in tds:
-                if len(td.get_text(strip=True)) > 200: # 기준을 200자로 상향
+                if len(td.get_text(strip=True)) > 200: 
                     content_div = td
                     break
 
@@ -140,10 +136,11 @@ def main():
             file_path = os.path.join(BASE_DIR, board['file'])
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    last_id = int(f.read().strip() or 0)
+                    content = f.read().strip()
+                    last_id = int(content) if content else 0
             except FileNotFoundError:
                 last_id = 0
-            print(f"   📂 저장된 ID: {last_id}")
+            print(f"   📂 읽어온 ID: {last_id}")
 
         # 2. 접속
         try:
@@ -168,7 +165,7 @@ def main():
             title_tag = row.find("a")
             if not title_tag: continue
 
-            # ★ 제목 정리: [학적] -> <학적>
+            # 제목 정리
             title = title_tag.text.strip()
             title = re.sub(r'\[(.*?)\]', r'<\1>', title)
 
@@ -177,36 +174,35 @@ def main():
             real_link = ""
             
             try:
-                # A. 전자공학부: href 그대로 사용 (목록 튕김 방지)
+                # A. 전자공학부 (ID 추출 로직 개선)
                 if board['type'] == 'see_knu':
                     # 1순위: no=숫자
                     match = re.search(r"no=(\d+)", href)
                     if match:
                         doc_id = int(match.group(1))
                     else:
+                        # 2순위: 링크에 있는 '가장 큰' 숫자 (페이지 번호 등 회피)
                         nums = re.findall(r"(\d+)", href)
-                        if nums: doc_id = int(nums[-1])
+                        if nums:
+                            # 숫자 리스트 중 가장 큰 값을 ID로 사용
+                            doc_id = max([int(n) for n in nums])
                     
                     if doc_id > 0:
-                        # ★ 수정됨: 주소 조립 대신 href를 그대로 붙임
-                        # 예: ?f=view&no=1234 -> https://see.knu.ac.kr/content/board/notice.html?f=view&no=1234
                         if href.startswith('?'):
                             real_link = board['view_base'] + href
                         else:
-                             # 만약 href가 전체 주소거나 다른 형식이면 urljoin 사용
                             real_link = urljoin(board['view_base'], href)
 
-                # B. 학사공지: bltn_no 사용 + 전체 파라미터 적용
+                # B. 학사공지
                 elif board['type'] == 'knu_academic':
                     numbers = re.findall(r"(\d+)", href)
                     for num in numbers:
                         if len(num) > 10: 
                             doc_id = int(num)
-                            # ★ 수정됨: 제보된 파라미터 구조 사용
                             real_link = f"{board['view_base']}{doc_id}"
                             break
 
-                # C. 전체공지: doc_no
+                # C. 전체공지
                 else: 
                     match = re.search(r"(\d+)", href)
                     if match:
@@ -216,10 +212,11 @@ def main():
             except Exception:
                 continue
 
+            # 새 글 판단
             if doc_id > 0 and doc_id > last_id:
                 new_posts.append({'id': doc_id, 'title': title, 'link': real_link})
 
-        # 4. 전송
+        # 4. 전송 및 저장
         if new_posts:
             new_posts.sort(key=lambda x: x['id'])
             
@@ -231,11 +228,14 @@ def main():
                 send_discord_message(webhook_url, board['name'], post['title'], post['link'], post['id'], content)
                 time.sleep(1)
 
+            # ★ ID 저장 (가장 중요)
             if test_id is None:
                 max_id = max(p['id'] for p in new_posts)
-                with open(os.path.join(BASE_DIR, board['file']), 'w', encoding='utf-8') as f:
+                file_path = os.path.join(BASE_DIR, board['file'])
+                with open(file_path, 'w', encoding='utf-8') as f:
                     f.write(str(max_id))
-                print(f"   💾 ID 업데이트: {max_id}")
+                # 디버깅: 실제로 저장된 번호를 출력
+                print(f"   💾 [저장 완료] 파일: {board['file']} / ID: {max_id}")
             else:
                 print("   🚫 [테스트] 파일 저장 건너뜀")
         else:
