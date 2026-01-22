@@ -22,7 +22,7 @@ TEST_IDS = {
 BOARDS = [
     {
         "id_key": "general",
-        "name": "📢 전체공지",
+        "name": "전체공지",
         "url": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/list.action?bbs_cde=1&menu_idx=67",
         "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/viewBtin.action?btin.bbs_cde=1&btin.appl_no=000000&menu_idx=67&btin.doc_no=",
         "file": "latest_id_general.txt",
@@ -31,7 +31,7 @@ BOARDS = [
     },
     {
         "id_key": "academic",
-        "name": "🎓 학사공지",
+        "name": "학사공지",
         "url": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdList.action?menu_idx=42",
         "view_base": "https://www.knu.ac.kr/wbbs/wbbs/bbs/btin/stdViewBtin.action?search_type=&search_text=&popupDeco=&note_div=row&menu_idx=42&bbs_cde=stu_812&bltn_no=",
         "file": "latest_id_academic.txt",
@@ -40,7 +40,7 @@ BOARDS = [
     },
     {
         "id_key": "electronic",
-        "name": "⚡ 전자공학부",
+        "name": "전자공학부",
         "url": "https://see.knu.ac.kr/content/board/notice.html",
         "view_base": "https://see.knu.ac.kr/content/board/notice.html?pg=vv&fidx=",
         "file": "latest_id_electronic.txt",
@@ -126,7 +126,7 @@ def get_gemini_summary(text):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={api_key}"
         payload = {
             "contents": [{
-                "parts": [{"text": f"다음 공지사항 내용을 3문장 이내로 제목 제외하고 핵심만 요약해줘:\n\n{text}"}]
+                "parts": [{"text": f"다음 공지사항 내용을 제목 제외하고 요지 2문장내외 그리고 특이사항은 번호를 매겨서 요약해줘:\n\n{text}"}]
             }]
         }
         res = requests.post(url, json=payload, timeout=10)
@@ -142,7 +142,7 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
     summary_text = get_gemini_summary(original_content)
 
     data = {
-        "content": f"🔔 **{board_name} 업데이트**",
+        "content": f"**New {board_name} ❗**",
         "embeds": [{
             "title": title,
             "description": f"✨ Gemini 요약\n{summary_text}",
