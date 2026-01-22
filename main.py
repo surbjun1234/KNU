@@ -126,7 +126,7 @@ def get_gemini_summary(text):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={api_key}"
         payload = {
             "contents": [{
-                "parts": [{"text": f"다음 공지사항 내용을 제목 제외하고 요지 2문장내외 그리고 특이사항은 번호를 매겨서 요약해줘:\n\n{text}"}]
+                "parts": [{"text": f"다음 공지사항 내용을 제목 제외하고 뭐에대한 내용인지 요지 2문장으로 요약해줘:\n\n{text}"}]
             }]
         }
         res = requests.post(url, json=payload, timeout=10)
@@ -142,7 +142,7 @@ def send_discord_message(webhook_url, board_name, title, link, doc_id, original_
     summary_text = get_gemini_summary(original_content)
 
     data = {
-        "content": f"**New {board_name} ❗**",
+        "content": f"**📢New {board_name}",
         "embeds": [{
             "title": title,
             "description": f"✨ Gemini 요약\n{summary_text}",
