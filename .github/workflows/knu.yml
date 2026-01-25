@@ -1,12 +1,14 @@
 name: KNU Notice Crawler
 
 on:
-  schedule:
-    # 30분마다 실행 (원하는 시간으로 변경 가능)
-    - cron: '51 * * * *'
-  workflow_dispatch:      # 수동 실행 버튼
+  # 외부(cron-job.org)에서 신호 받을 준비
+  repository_dispatch:
+    types: [knu-crawler-trigger]
+    
+  # 수동 실행 버튼
+  workflow_dispatch:
 
-# ★★★ [핵심] 봇에게 파일 쓰기(저장) 권한 부여 ★★★
+# ★★★ [핵심] 파일 쓰기 권한 (외부 크론으로 실행돼도 이 권한은 필수입니다) ★★★
 permissions:
   contents: write
 
@@ -28,29 +30,24 @@ jobs:
         pip install requests beautifulsoup4
 
     - name: Run Crawler
-      # Secrets에 설정한 웹훅들을 파이썬으로 전달
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        # 1. 기본 웹훅
         WEBHOOK_GENERAL: ${{ secrets.WEBHOOK_GENERAL }}
         WEBHOOK_ACADEMIC: ${{ secrets.WEBHOOK_ACADEMIC }}
         WEBHOOK_ELECTRONIC: ${{ secrets.WEBHOOK_ELECTRONIC }}
-        
-        # 2. 전자공학부 세부 웹훅 (추가된 부분)
         WEBHOOK_ELEC_CLASS: ${{ secrets.WEBHOOK_ELEC_CLASS }}
         WEBHOOK_ELEC_RECORD: ${{ secrets.WEBHOOK_ELEC_RECORD }}
         WEBHOOK_ELEC_JOB: ${{ secrets.WEBHOOK_ELEC_JOB }}
         WEBHOOK_ELEC_SCHOLARSHIP: ${{ secrets.WEBHOOK_ELEC_SCHOLARSHIP }}
         WEBHOOK_ELEC_EVENT: ${{ secrets.WEBHOOK_ELEC_EVENT }}
         WEBHOOK_ELEC_ETC: ${{ secrets.WEBHOOK_ELEC_ETC }}
-      
       run: python main.py
       
     - name: Commit files
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        # 최신 ID가 저장된 텍스트 파일들만 저장소에 올림
         git add latest_id_*.txt
+        # 변경 사항이 있을 때만 커밋
         git commit -m "Update latest IDs" || echo "No changes to commit"
         git push
