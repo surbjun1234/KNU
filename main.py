@@ -216,7 +216,7 @@ def main():
                 title = re.sub(r'\[(.*?)\]', r'<\1>', title)
                 
                 # 2. 맨 앞 단어가 카테고리일 경우 < > 씌우기
-                categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업)(?=\s|$)"
+                categories = r"^(취업|장학|학적|수업|일반|행사|공지|국제|졸업|기타)(?=\s|$)"
                 title = re.sub(categories, r'<\1>', title)
                 
                 # 3. 태그 추출
